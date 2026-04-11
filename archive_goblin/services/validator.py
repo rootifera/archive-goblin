@@ -29,7 +29,7 @@ class RenameValidator:
                 file_item.status = FileStatus.IGNORED
                 continue
 
-            if file_item.is_protected:
+            if file_item.is_protected and not file_item.allow_protected_rename:
                 file_item.status = FileStatus.PROTECTED
                 continue
 
@@ -62,7 +62,7 @@ class RenameValidator:
 
     def _has_pending_operation(self, file_item: FileItem) -> bool:
         return (
-            not file_item.is_protected
+            (not file_item.is_protected or file_item.allow_protected_rename)
             and file_item.type is not FileType.IGNORE
             and (file_item.has_pending_rename or file_item.has_pending_cover_copy)
         )

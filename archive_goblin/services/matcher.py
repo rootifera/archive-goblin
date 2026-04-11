@@ -32,15 +32,7 @@ class RuleMatcher:
             for extension in (protected_extensions or DEFAULT_PROTECTED_DISK_IMAGE_EXTENSIONS)
         }
         extension = path.suffix.casefold()
-        if extension in active_protected_extensions:
-            return FileItem(
-                path=path,
-                detected_type=FileType.DISK_IMAGE,
-                type=FileType.DISK_IMAGE,
-                detected_index=None,
-                index=None,
-                is_protected=True,
-            )
+        is_protected_extension = extension in active_protected_extensions
 
         normalized_match = self._match_normalized_name(path)
         if normalized_match is not None:
@@ -56,7 +48,18 @@ class RuleMatcher:
                     index=rule.index,
                     matched_rule_pattern=rule.pattern,
                     rule_output_name=rule.output_name,
+                    is_protected=is_protected_extension,
                 )
+
+        if is_protected_extension:
+            return FileItem(
+                path=path,
+                detected_type=FileType.DISK_IMAGE,
+                type=FileType.DISK_IMAGE,
+                detected_index=None,
+                index=None,
+                is_protected=True,
+            )
 
         return FileItem(
             path=path,

@@ -88,6 +88,19 @@ class RenameValidatorTests(unittest.TestCase):
             self.assertEqual(item.cover_image_name, "000-cover-image-01.jpg")
             self.assertEqual(item.status, FileStatus.READY)
 
+    def test_protected_file_can_be_overridden_per_file(self) -> None:
+        with TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            item = self._make_file(folder, "cd.iso", FileType.MEDIA_SCAN, index=1)
+            item.is_protected = True
+            item.allow_protected_rename = True
+            self.naming.update_file_name(item)
+
+            self.validator.validate(folder, [item])
+
+            self.assertEqual(item.proposed_name, "200-disk-01.iso")
+            self.assertEqual(item.status, FileStatus.READY)
+
     def _make_file(self, folder: Path, name: str, file_type: FileType, index: int) -> FileItem:
         path = folder / name
         self._write_file(path)

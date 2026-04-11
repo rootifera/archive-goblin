@@ -46,15 +46,22 @@ class FilesPage(QWidget):
         self.apply_button = QPushButton("Apply Renames")
         self.previous_button = QPushButton("Previous")
         self.next_button = QPushButton("Next")
-        self.hide_disk_images_checkbox = QCheckBox("Hide Disk Images")
-        self.hide_disk_images_checkbox.setChecked(True)
+        self.hide_protected_files_checkbox = QCheckBox("Hide Protected Files")
+        self.hide_protected_files_checkbox.setChecked(True)
         self.summary_label = QLabel("0 files")
+        self.toolbar_divider = QFrame()
+        self.toolbar_divider.setFrameShape(QFrame.VLine)
+        self.toolbar_divider.setFrameShadow(QFrame.Sunken)
         toolbar_layout.addWidget(self.open_button)
         toolbar_layout.addWidget(self.rescan_button)
         toolbar_layout.addWidget(self.apply_button)
         toolbar_layout.addWidget(self.previous_button)
         toolbar_layout.addWidget(self.next_button)
-        toolbar_layout.addWidget(self.hide_disk_images_checkbox)
+        toolbar_layout.addWidget(self.hide_protected_files_checkbox)
+        toolbar_layout.addSpacing(8)
+        toolbar_layout.addWidget(self.toolbar_divider)
+        toolbar_layout.addSpacing(8)
+        toolbar_layout.addStretch(1)
         toolbar_layout.addWidget(self.summary_label)
         root_layout.addLayout(toolbar_layout)
 
@@ -79,6 +86,7 @@ class FilesPage(QWidget):
         self.full_name_edit.setReadOnly(True)
         self.cover_copy_edit = QLineEdit()
         self.cover_copy_edit.setReadOnly(True)
+        self.allow_protected_rename_checkbox = QCheckBox("Allow rename for protected file")
         self.set_as_cover_image_checkbox = QCheckBox("Set as cover image")
         self.do_not_rename_checkbox = QCheckBox("Do not rename")
         self.status_label = QLabel("—")
@@ -91,6 +99,7 @@ class FilesPage(QWidget):
         form_layout.addRow("Detected Type", self.detected_type_label)
         form_layout.addRow("Output", self.full_name_edit)
         form_layout.addRow("Cover Copy", self.cover_copy_edit)
+        form_layout.addRow("", self.allow_protected_rename_checkbox)
         form_layout.addRow("", self.set_as_cover_image_checkbox)
         form_layout.addRow("", self.do_not_rename_checkbox)
         form_layout.addRow("Status", self.status_label)
@@ -111,7 +120,8 @@ class FilesPage(QWidget):
         self.rescan_button.clicked.connect(self.rescan_requested.emit)
         self.apply_button.clicked.connect(self.apply_requested.emit)
         self.file_table.row_selected.connect(self._on_row_selected)
-        self.hide_disk_images_checkbox.toggled.connect(self._apply_filter)
+        self.hide_protected_files_checkbox.toggled.connect(self._apply_filter)
+        self.allow_protected_rename_checkbox.toggled.connect(self._emit_detail_change)
         self.set_as_cover_image_checkbox.toggled.connect(self._emit_detail_change)
         self.do_not_rename_checkbox.toggled.connect(self._emit_detail_change)
         self.previous_button.clicked.connect(lambda: self._step_selection(-1))
@@ -140,6 +150,7 @@ class FilesPage(QWidget):
             return
 
         changes = {
+            "allow_protected_rename": self.allow_protected_rename_checkbox.isChecked(),
             "set_as_cover_image": self.set_as_cover_image_checkbox.isChecked(),
             "do_not_rename": self.do_not_rename_checkbox.isChecked(),
         }
@@ -153,6 +164,7 @@ class FilesPage(QWidget):
                 self.detected_type_label.setText("—")
                 self.full_name_edit.clear()
                 self.cover_copy_edit.clear()
+                self.allow_protected_rename_checkbox.setChecked(False)
                 self.set_as_cover_image_checkbox.setChecked(False)
                 self.do_not_rename_checkbox.setChecked(False)
                 self.status_label.setText("—")
@@ -167,6 +179,7 @@ class FilesPage(QWidget):
             self.detected_type_label.setText(file_type_label(file_item.type))
             self.full_name_edit.setText(file_item.proposed_name or "")
             self.cover_copy_edit.setText(file_item.cover_image_name or "")
+            self.allow_protected_rename_checkbox.setChecked(file_item.allow_protected_rename)
             self.set_as_cover_image_checkbox.setChecked(file_item.set_as_cover_image)
             self.do_not_rename_checkbox.setChecked(file_item.do_not_rename)
             self.status_label.setText(self._status_text(file_item))
@@ -174,12 +187,16 @@ class FilesPage(QWidget):
             self.review_note_label.setText(self._review_note_text(file_item))
             self.preview.load_image(file_item.path)
             allow_cover_copy = (
-                not file_item.is_protected
+                (not file_item.is_protected or file_item.allow_protected_rename)
                 and file_item.type is not FileType.DISK_IMAGE
                 and not file_item.is_cover_image_copy
             )
+            self.allow_protected_rename_checkbox.setEnabled(file_item.is_protected and not file_item.is_cover_image_copy)
             self.set_as_cover_image_checkbox.setEnabled(allow_cover_copy)
-            self.do_not_rename_checkbox.setEnabled(not file_item.is_protected and not file_item.is_cover_image_copy)
+            self.do_not_rename_checkbox.setEnabled(
+                (not file_item.is_protected or file_item.allow_protected_rename)
+                and not file_item.is_cover_image_copy
+            )
             self._update_navigation_buttons()
         finally:
             self._updating = False
@@ -191,9 +208,9 @@ class FilesPage(QWidget):
 
         visible_files: list[FileItem] = []
         self._visible_rows = []
-        hide_disk_images = self.hide_disk_images_checkbox.isChecked()
+        hide_protected_files = self.hide_protected_files_checkbox.isChecked()
         for index, file_item in enumerate(self._files):
-            if hide_disk_images and file_item.type is FileType.DISK_IMAGE:
+            if hide_protected_files and file_item.is_protected:
                 continue
             self._visible_rows.append(index)
             visible_files.append(file_item)
@@ -215,8 +232,8 @@ class FilesPage(QWidget):
 
     def _status_text(self, file_item: FileItem) -> str:
         if file_item.status is FileStatus.CONFLICT and file_item.conflict_message:
-            return f"{file_item.status.value.replace('_', ' ').title()}: {file_item.conflict_message}"
-        return file_item.status.value.replace("_", " ").title()
+            return f"{self._display_status_text(file_item.status)}: {file_item.conflict_message}"
+        return self._display_status_text(file_item.status)
 
     def _status_style(self, status: FileStatus) -> str:
         if status is FileStatus.CONFLICT:
@@ -232,6 +249,11 @@ class FilesPage(QWidget):
         if status is FileStatus.IGNORED:
             return "background:#2d3642; color:#b0bac5;"
         return ""
+
+    def _display_status_text(self, status: FileStatus) -> str:
+        if status is FileStatus.READY:
+            return "Ready for Rename"
+        return status.value.replace("_", " ").title()
 
     def _summarize(self, files: list[FileItem]) -> str:
         if not files:
@@ -294,9 +316,9 @@ class FilesPage(QWidget):
         if file_item.status is FileStatus.CONFLICT:
             return "This file cannot be applied yet because its target name collides with another file or an existing filename."
         if file_item.status is FileStatus.PROTECTED:
-            return "This file is protected from automatic rename, usually because it is a disk image."
+            return "This file is protected from automatic rename, usually because of its extension. Enable the protected-file override to allow renaming for this one file."
         if file_item.status is FileStatus.DONE:
             return "This file already matches its normalized output name."
         if file_item.status is FileStatus.READY:
-            return "This file is ready to be processed during the next apply step."
+            return "This file has a valid proposed rename and will be processed during the next apply step."
         return ""

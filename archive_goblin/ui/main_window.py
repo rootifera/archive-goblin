@@ -22,7 +22,7 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("Archive Goblin")
-        self.resize(1280, 760)
+        self.resize(1480, 820)
 
         self.settings_store = SettingsStore()
         self.scanner = FolderScanner()

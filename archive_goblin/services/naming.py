@@ -19,7 +19,7 @@ class NamingService:
         file_item.descriptor = descriptor
         file_item.cover_image_name = self._cover_image_name_for(file_item)
 
-        if file_item.do_not_rename or file_item.is_protected or file_item.type in {
+        if file_item.do_not_rename or (file_item.is_protected and not file_item.allow_protected_rename) or file_item.type in {
             FileType.OTHER,
             FileType.IGNORE,
             FileType.DISK_IMAGE,

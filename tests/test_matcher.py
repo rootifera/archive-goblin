@@ -47,6 +47,14 @@ class RuleMatcherTests(unittest.TestCase):
         self.assertEqual(item.type, FileType.DISK_IMAGE)
         self.assertTrue(item.is_protected)
 
+    def test_protected_extension_can_still_match_rule(self) -> None:
+        rules = [Rule(pattern="cd", type=FileType.MEDIA_SCAN, index=1)]
+
+        item = self.matcher.classify(Path("/tmp/cd.iso"), rules)
+
+        self.assertEqual(item.type, FileType.MEDIA_SCAN)
+        self.assertTrue(item.is_protected)
+
 
 if __name__ == "__main__":
     unittest.main()

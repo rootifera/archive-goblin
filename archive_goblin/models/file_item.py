@@ -31,6 +31,7 @@ class FileItem:
     cover_image_name: str | None = None
     is_protected: bool = False
     is_cover_image_copy: bool = False
+    allow_protected_rename: bool = False
     set_as_cover_image: bool = False
     do_not_rename: bool = False
     status: FileStatus = FileStatus.UNCHANGED

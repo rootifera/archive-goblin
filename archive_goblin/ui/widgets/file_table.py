@@ -38,7 +38,7 @@ class FileTable(QTableWidget):
                 original_item = QTableWidgetItem(file_item.original_name)
                 type_item = QTableWidgetItem(file_type_label(file_item.type))
                 proposed_item = QTableWidgetItem(file_item.proposed_name or "")
-                status_text = file_item.status.replace("_", " ").title()
+                status_text = self._display_status_text(file_item.status)
                 if file_item.conflict_message:
                     status_text = f"{status_text}: {file_item.conflict_message}"
                 status_item = QTableWidgetItem(status_text)
@@ -93,3 +93,8 @@ class FileTable(QTableWidget):
         item.setForeground(QBrush(foreground))
         item.setBackground(QBrush(background))
         item.setFont(font)
+
+    def _display_status_text(self, status: FileStatus) -> str:
+        if status is FileStatus.READY:
+            return "Ready for Rename"
+        return status.value.replace("_", " ").title()
