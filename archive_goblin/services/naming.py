@@ -31,6 +31,8 @@ class NamingService:
         file_item.proposed_name = f"{prefix:03d}-{descriptor}{file_item.extension}"
 
     def build_preview_name(self, rule: Rule, extension: str = ".jpg") -> str:
+        if rule.type in {FileType.OTHER, FileType.DISK_IMAGE, FileType.IGNORE}:
+            return "No automatic rename"
         descriptor = self._descriptor_for_rule(rule)
         prefix = self._prefix_for(rule.type, rule.index)
         normalized_extension = extension if extension.startswith(".") else f".{extension}"

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QBrush, QFont
 from PySide6.QtWidgets import QHeaderView, QTableWidget, QTableWidgetItem
 
-from archive_goblin.models.file_item import FileItem
+from archive_goblin.models.file_item import FileItem, FileStatus
 from archive_goblin.models.rule import file_type_label
 
 
@@ -34,13 +35,22 @@ class FileTable(QTableWidget):
         try:
             self.setRowCount(len(files))
             for row, file_item in enumerate(files):
-                self.setItem(row, 0, QTableWidgetItem(file_item.original_name))
-                self.setItem(row, 1, QTableWidgetItem(file_type_label(file_item.type)))
-                self.setItem(row, 2, QTableWidgetItem(file_item.proposed_name or ""))
+                original_item = QTableWidgetItem(file_item.original_name)
+                type_item = QTableWidgetItem(file_type_label(file_item.type))
+                proposed_item = QTableWidgetItem(file_item.proposed_name or "")
                 status_text = file_item.status.replace("_", " ").title()
                 if file_item.conflict_message:
                     status_text = f"{status_text}: {file_item.conflict_message}"
-                self.setItem(row, 3, QTableWidgetItem(status_text))
+                status_item = QTableWidgetItem(status_text)
+                status_item.setTextAlignment(Qt.AlignCenter)
+
+                for item in (original_item, type_item, proposed_item, status_item):
+                    self._style_item(item, file_item)
+
+                self.setItem(row, 0, original_item)
+                self.setItem(row, 1, type_item)
+                self.setItem(row, 2, proposed_item)
+                self.setItem(row, 3, status_item)
         finally:
             self._updating = False
 
@@ -54,3 +64,32 @@ class FileTable(QTableWidget):
         selected_rows = self.selectionModel().selectedRows()
         row = selected_rows[0].row() if selected_rows else -1
         self.row_selected.emit(row)
+
+    def _style_item(self, item: QTableWidgetItem, file_item: FileItem) -> None:
+        foreground = QColor("#1f2933")
+        background = QColor("#151a21")
+        font = QFont()
+
+        if file_item.status is FileStatus.CONFLICT:
+            foreground = QColor("#ffb4b4")
+            background = QColor("#4c1d1d")
+            font.setBold(True)
+        elif file_item.status is FileStatus.READY:
+            foreground = QColor("#b7f7c2")
+            background = QColor("#173225")
+        elif file_item.status is FileStatus.DONE:
+            foreground = QColor("#c5ced8")
+            background = QColor("#24303d")
+        elif file_item.status is FileStatus.PROTECTED:
+            foreground = QColor("#ffd79a")
+            background = QColor("#45311a")
+        elif file_item.status is FileStatus.UNMATCHED:
+            foreground = QColor("#d5dbe3")
+            background = QColor("#2a3441")
+        elif file_item.status is FileStatus.IGNORED:
+            foreground = QColor("#b0bac5")
+            background = QColor("#2d3642")
+
+        item.setForeground(QBrush(foreground))
+        item.setBackground(QBrush(background))
+        item.setFont(font)

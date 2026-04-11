@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHeaderView,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
@@ -29,14 +30,24 @@ from archive_goblin.services.naming import NamingService
 
 
 class RuleDialog(QDialog):
-    def __init__(self, parent: QWidget | None = None, rule: Rule | None = None) -> None:
+    def __init__(
+        self,
+        parent: QWidget | None = None,
+        rule: Rule | None = None,
+        existing_rules: list[Rule] | None = None,
+        editing_row: int | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Rule")
+        self.naming_service = NamingService()
+        self._existing_rules = list(existing_rules or [])
+        self._editing_row = editing_row
 
         layout = QVBoxLayout(self)
         form_layout = QFormLayout()
 
         self.pattern_edit = QLineEdit()
+        self.pattern_edit.setPlaceholderText("Example: A_FRONT")
         self.type_combo = QComboBox()
         for file_type in FILE_TYPE_VALUES:
             self.type_combo.addItem(file_type_label(file_type), file_type)
@@ -44,11 +55,20 @@ class RuleDialog(QDialog):
         self.index_spin.setMinimum(1)
         self.index_spin.setMaximum(999)
         self.output_name_edit = QLineEdit()
+        self.output_name_edit.setPlaceholderText("Only used for Custom rules")
+        self.matching_help_label = QLabel("Matches the filename stem exactly, case-insensitive.")
+        self.matching_help_label.setStyleSheet("color:#7c8796;")
+        self.preview_label = QLabel("Preview")
+        self.preview_label.setStyleSheet("font-weight:600;")
+        self.preview_value = QLineEdit()
+        self.preview_value.setReadOnly(True)
 
         form_layout.addRow("Pattern", self.pattern_edit)
+        form_layout.addRow("", self.matching_help_label)
         form_layout.addRow("Type", self.type_combo)
         form_layout.addRow("Index", self.index_spin)
-        form_layout.addRow("Output Name", self.output_name_edit)
+        form_layout.addRow("Custom Output", self.output_name_edit)
+        form_layout.addRow(self.preview_label, self.preview_value)
         layout.addLayout(form_layout)
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -57,6 +77,9 @@ class RuleDialog(QDialog):
         layout.addWidget(buttons)
 
         self.type_combo.currentIndexChanged.connect(self._sync_output_name_state)
+        self.type_combo.currentIndexChanged.connect(self._refresh_preview)
+        self.index_spin.valueChanged.connect(self._refresh_preview)
+        self.output_name_edit.textChanged.connect(self._refresh_preview)
 
         if rule is not None:
             self.pattern_edit.setText(rule.pattern)
@@ -68,12 +91,22 @@ class RuleDialog(QDialog):
                     break
 
         self._sync_output_name_state()
+        self._refresh_preview()
 
     def _sync_output_name_state(self) -> None:
         is_custom = coerce_file_type(self.type_combo.currentData()) == FileType.CUSTOM
         self.output_name_edit.setEnabled(is_custom)
         if not is_custom:
             self.output_name_edit.clear()
+
+    def _refresh_preview(self) -> None:
+        preview_rule = Rule(
+            pattern=self.pattern_edit.text().strip() or "example",
+            type=coerce_file_type(self.type_combo.currentData()),
+            index=self.index_spin.value(),
+            output_name=self.output_name_edit.text().strip() or None,
+        )
+        self.preview_value.setText(self.naming_service.build_preview_name(preview_rule))
 
     def build_rule(self) -> Rule | None:
         pattern = self.pattern_edit.text().strip()
@@ -87,6 +120,14 @@ class RuleDialog(QDialog):
             QMessageBox.warning(self, "Invalid Rule", "Custom rules need an output name.")
             return None
 
+        if self._has_duplicate_pattern(pattern):
+            QMessageBox.warning(
+                self,
+                "Duplicate Pattern",
+                "A rule with this pattern already exists. Patterns should stay unique for predictable matching.",
+            )
+            return None
+
         return Rule(
             pattern=pattern,
             type=file_type,
@@ -94,13 +135,23 @@ class RuleDialog(QDialog):
             output_name=output_name,
         )
 
+    def _has_duplicate_pattern(self, pattern: str) -> bool:
+        normalized = pattern.casefold()
+        for row, existing_rule in enumerate(self._existing_rules):
+            if self._editing_row is not None and row == self._editing_row:
+                continue
+            if existing_rule.normalized_pattern == normalized:
+                return True
+        return False
+
 
 class SettingsPage(QWidget):
-    rules_changed = Signal(list)
+    settings_changed = Signal(list, list)
 
-    def __init__(self, rules: list[Rule]) -> None:
+    def __init__(self, rules: list[Rule], protected_disk_image_extensions: list[str]) -> None:
         super().__init__()
         self._rules = list(rules)
+        self._protected_disk_image_extensions = list(protected_disk_image_extensions)
         self.naming_service = NamingService()
 
         layout = QVBoxLayout(self)
@@ -139,10 +190,27 @@ class SettingsPage(QWidget):
         self.move_up_button.clicked.connect(lambda: self._move_rule(-1))
         self.move_down_button.clicked.connect(lambda: self._move_rule(1))
 
-        self.set_rules(self._rules)
+        extension_form = QFormLayout()
+        self.protected_extensions_edit = QLineEdit()
+        self.protected_extensions_edit.setPlaceholderText(".cue, .ccd, .img, .sub, .bin, .iso")
+        self.protected_extensions_help = QLabel(
+            "Comma-separated extensions treated as protected disk images."
+        )
+        self.protected_extensions_help.setStyleSheet("color:#7c8796;")
+        extension_form.addRow("Protected Extensions", self.protected_extensions_edit)
+        extension_form.addRow("", self.protected_extensions_help)
+        layout.addLayout(extension_form)
 
-    def set_rules(self, rules: list[Rule]) -> None:
+        self.protected_extensions_edit.editingFinished.connect(self._save_protected_extensions)
+
+        self.set_settings(self._rules, self._protected_disk_image_extensions)
+
+    def set_settings(self, rules: list[Rule], protected_disk_image_extensions: list[str]) -> None:
         self._rules = list(rules)
+        self._protected_disk_image_extensions = list(protected_disk_image_extensions)
+        self.protected_extensions_edit.blockSignals(True)
+        self.protected_extensions_edit.setText(", ".join(self._protected_disk_image_extensions))
+        self.protected_extensions_edit.blockSignals(False)
         self._refresh_table()
 
     def _refresh_table(self) -> None:
@@ -169,7 +237,7 @@ class SettingsPage(QWidget):
         return selected[0].row()
 
     def _add_rule(self) -> None:
-        dialog = RuleDialog(self)
+        dialog = RuleDialog(self, existing_rules=self._rules)
         if dialog.exec() != QDialog.Accepted:
             return
 
@@ -178,7 +246,7 @@ class SettingsPage(QWidget):
             return
 
         self._rules.append(rule)
-        self._emit_rules_changed()
+        self._emit_settings_changed()
 
     def _edit_rule(self) -> None:
         row = self._current_row()
@@ -186,7 +254,7 @@ class SettingsPage(QWidget):
             QMessageBox.information(self, "No Selection", "Select a rule to edit.")
             return
 
-        dialog = RuleDialog(self, self._rules[row])
+        dialog = RuleDialog(self, self._rules[row], existing_rules=self._rules, editing_row=row)
         if dialog.exec() != QDialog.Accepted:
             return
 
@@ -195,7 +263,7 @@ class SettingsPage(QWidget):
             return
 
         self._rules[row] = rule
-        self._emit_rules_changed()
+        self._emit_settings_changed()
 
     def _delete_rule(self) -> None:
         row = self._current_row()
@@ -204,7 +272,7 @@ class SettingsPage(QWidget):
             return
 
         del self._rules[row]
-        self._emit_rules_changed()
+        self._emit_settings_changed()
 
     def _move_rule(self, offset: int) -> None:
         row = self._current_row()
@@ -217,24 +285,52 @@ class SettingsPage(QWidget):
             return
 
         self._rules[row], self._rules[target] = self._rules[target], self._rules[row]
-        self._emit_rules_changed()
+        self._emit_settings_changed()
         self.rule_table.selectRow(target)
 
-    def _emit_rules_changed(self) -> None:
+    def _emit_settings_changed(self) -> None:
         self._refresh_table()
-        self.rules_changed.emit(list(self._rules))
+        self.settings_changed.emit(list(self._rules), list(self._protected_disk_image_extensions))
+
+    def _save_protected_extensions(self) -> None:
+        raw_values = self.protected_extensions_edit.text().split(",")
+        normalized = []
+        seen: set[str] = set()
+        for raw_value in raw_values:
+            cleaned = raw_value.strip().casefold()
+            if not cleaned:
+                continue
+            if not cleaned.startswith("."):
+                cleaned = f".{cleaned}"
+            if cleaned in seen:
+                continue
+            seen.add(cleaned)
+            normalized.append(cleaned)
+
+        if not normalized:
+            QMessageBox.warning(
+                self,
+                "Invalid Extensions",
+                "Enter at least one extension to keep disk image protection enabled.",
+            )
+            self.protected_extensions_edit.setText(", ".join(self._protected_disk_image_extensions))
+            return
+
+        self._protected_disk_image_extensions = normalized
+        self.protected_extensions_edit.setText(", ".join(self._protected_disk_image_extensions))
+        self._emit_settings_changed()
 
 
 class SettingsDialog(QDialog):
-    rules_changed = Signal(list)
+    settings_changed = Signal(list, list)
 
-    def __init__(self, rules: list[Rule], parent: QWidget | None = None) -> None:
+    def __init__(self, rules: list[Rule], protected_disk_image_extensions: list[str], parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Rules")
         self.resize(760, 480)
 
         layout = QVBoxLayout(self)
-        self.settings_page = SettingsPage(rules)
+        self.settings_page = SettingsPage(rules, protected_disk_image_extensions)
         layout.addWidget(self.settings_page)
 
         close_buttons = QDialogButtonBox(QDialogButtonBox.Close)
@@ -243,7 +339,7 @@ class SettingsDialog(QDialog):
         close_buttons.button(QDialogButtonBox.Close).clicked.connect(self.accept)
         layout.addWidget(close_buttons)
 
-        self.settings_page.rules_changed.connect(self.rules_changed.emit)
+        self.settings_page.settings_changed.connect(self.settings_changed.emit)
 
-    def set_rules(self, rules: list[Rule]) -> None:
-        self.settings_page.set_rules(rules)
+    def set_settings(self, rules: list[Rule], protected_disk_image_extensions: list[str]) -> None:
+        self.settings_page.set_settings(rules, protected_disk_image_extensions)

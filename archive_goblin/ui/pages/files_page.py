@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QFileDialog,
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QFrame,
     QPushButton,
     QSplitter,
     QVBoxLayout,
@@ -42,12 +44,16 @@ class FilesPage(QWidget):
         self.open_button = QPushButton("Open Folder")
         self.rescan_button = QPushButton("Rescan")
         self.apply_button = QPushButton("Apply Renames")
+        self.previous_button = QPushButton("Previous")
+        self.next_button = QPushButton("Next")
         self.hide_disk_images_checkbox = QCheckBox("Hide Disk Images")
         self.hide_disk_images_checkbox.setChecked(True)
         self.summary_label = QLabel("0 files")
         toolbar_layout.addWidget(self.open_button)
         toolbar_layout.addWidget(self.rescan_button)
         toolbar_layout.addWidget(self.apply_button)
+        toolbar_layout.addWidget(self.previous_button)
+        toolbar_layout.addWidget(self.next_button)
         toolbar_layout.addWidget(self.hide_disk_images_checkbox)
         toolbar_layout.addWidget(self.summary_label)
         root_layout.addLayout(toolbar_layout)
@@ -76,6 +82,11 @@ class FilesPage(QWidget):
         self.set_as_cover_image_checkbox = QCheckBox("Set as cover image")
         self.do_not_rename_checkbox = QCheckBox("Do not rename")
         self.status_label = QLabel("—")
+        self.status_label.setFrameShape(QFrame.StyledPanel)
+        self.status_label.setMargin(6)
+        self.review_note_label = QLabel("")
+        self.review_note_label.setWordWrap(True)
+        self.review_note_label.setStyleSheet("color:#7c8796;")
         form_layout.addRow("Original", self.original_name_label)
         form_layout.addRow("Detected Type", self.detected_type_label)
         form_layout.addRow("Output", self.full_name_edit)
@@ -83,11 +94,18 @@ class FilesPage(QWidget):
         form_layout.addRow("", self.set_as_cover_image_checkbox)
         form_layout.addRow("", self.do_not_rename_checkbox)
         form_layout.addRow("Status", self.status_label)
+        form_layout.addRow("Review Note", self.review_note_label)
         detail_layout.addLayout(form_layout)
         splitter.addWidget(detail_widget)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
         root_layout.addWidget(splitter, 1)
+
+        self.shortcut_hint_label = QLabel(
+            "Shortcuts: J/K navigate • C toggle cover image • D toggle do not rename"
+        )
+        self.shortcut_hint_label.setStyleSheet("color:#7c8796; padding-top:4px;")
+        root_layout.addWidget(self.shortcut_hint_label)
 
         self.open_button.clicked.connect(self._choose_folder)
         self.rescan_button.clicked.connect(self.rescan_requested.emit)
@@ -96,6 +114,10 @@ class FilesPage(QWidget):
         self.hide_disk_images_checkbox.toggled.connect(self._apply_filter)
         self.set_as_cover_image_checkbox.toggled.connect(self._emit_detail_change)
         self.do_not_rename_checkbox.toggled.connect(self._emit_detail_change)
+        self.previous_button.clicked.connect(lambda: self._step_selection(-1))
+        self.next_button.clicked.connect(lambda: self._step_selection(1))
+
+        self._install_shortcuts()
 
     def set_files(self, folder: Path | None, files: list[FileItem]) -> None:
         self._folder = folder
@@ -111,6 +133,7 @@ class FilesPage(QWidget):
     def _on_row_selected(self, row: int) -> None:
         self._current_row = self._visible_rows[row] if 0 <= row < len(self._visible_rows) else -1
         self._refresh_details()
+        self._update_navigation_buttons()
 
     def _emit_detail_change(self) -> None:
         if self._updating or self._current_row < 0 or self._current_row >= len(self._files):
@@ -133,7 +156,10 @@ class FilesPage(QWidget):
                 self.set_as_cover_image_checkbox.setChecked(False)
                 self.do_not_rename_checkbox.setChecked(False)
                 self.status_label.setText("—")
+                self.status_label.setStyleSheet("")
+                self.review_note_label.setText("")
                 self.preview.clear()
+                self._update_navigation_buttons()
                 return
 
             file_item = self._files[self._current_row]
@@ -144,6 +170,8 @@ class FilesPage(QWidget):
             self.set_as_cover_image_checkbox.setChecked(file_item.set_as_cover_image)
             self.do_not_rename_checkbox.setChecked(file_item.do_not_rename)
             self.status_label.setText(self._status_text(file_item))
+            self.status_label.setStyleSheet(self._status_style(file_item.status))
+            self.review_note_label.setText(self._review_note_text(file_item))
             self.preview.load_image(file_item.path)
             allow_cover_copy = (
                 not file_item.is_protected
@@ -152,6 +180,7 @@ class FilesPage(QWidget):
             )
             self.set_as_cover_image_checkbox.setEnabled(allow_cover_copy)
             self.do_not_rename_checkbox.setEnabled(not file_item.is_protected and not file_item.is_cover_image_copy)
+            self._update_navigation_buttons()
         finally:
             self._updating = False
 
@@ -182,11 +211,27 @@ class FilesPage(QWidget):
         self._current_row = self._visible_rows[new_visible_row] if new_visible_row >= 0 else -1
         self.file_table.select_row(new_visible_row)
         self._refresh_details()
+        self._update_navigation_buttons()
 
     def _status_text(self, file_item: FileItem) -> str:
         if file_item.status is FileStatus.CONFLICT and file_item.conflict_message:
             return f"{file_item.status.value.replace('_', ' ').title()}: {file_item.conflict_message}"
         return file_item.status.value.replace("_", " ").title()
+
+    def _status_style(self, status: FileStatus) -> str:
+        if status is FileStatus.CONFLICT:
+            return "background:#4c1d1d; color:#ffb4b4; font-weight:600;"
+        if status is FileStatus.READY:
+            return "background:#173225; color:#b7f7c2;"
+        if status is FileStatus.DONE:
+            return "background:#24303d; color:#c5ced8;"
+        if status is FileStatus.PROTECTED:
+            return "background:#45311a; color:#ffd79a;"
+        if status is FileStatus.UNMATCHED:
+            return "background:#2a3441; color:#d5dbe3;"
+        if status is FileStatus.IGNORED:
+            return "background:#2d3642; color:#b0bac5;"
+        return ""
 
     def _summarize(self, files: list[FileItem]) -> str:
         if not files:
@@ -196,7 +241,62 @@ class FilesPage(QWidget):
         done_count = sum(1 for file_item in files if file_item.status is FileStatus.DONE)
         conflict_count = sum(1 for file_item in files if file_item.status is FileStatus.CONFLICT)
         protected_count = sum(1 for file_item in files if file_item.status is FileStatus.PROTECTED)
+        unmatched_count = sum(1 for file_item in files if file_item.status is FileStatus.UNMATCHED)
         return (
             f"{len(files)} files | {ready_count} ready | {done_count} done | "
-            f"{conflict_count} conflicts | {protected_count} protected"
+            f"{conflict_count} conflicts | {unmatched_count} unmatched | {protected_count} protected"
         )
+
+    def _install_shortcuts(self) -> None:
+        QShortcut(QKeySequence(Qt.Key_J), self, activated=lambda: self._step_selection(1))
+        QShortcut(QKeySequence(Qt.Key_K), self, activated=lambda: self._step_selection(-1))
+        QShortcut(QKeySequence(Qt.Key_D), self, activated=self._toggle_do_not_rename)
+        QShortcut(QKeySequence(Qt.Key_C), self, activated=self._toggle_cover_image)
+
+    def _step_selection(self, direction: int) -> None:
+        if not self._visible_rows:
+            return
+
+        current_visible_row = self._visible_row_for_current_selection()
+        if current_visible_row < 0:
+            target_row = 0
+        else:
+            target_row = max(0, min(len(self._visible_rows) - 1, current_visible_row + direction))
+        self.file_table.select_row(target_row)
+
+    def _visible_row_for_current_selection(self) -> int:
+        if self._current_row < 0:
+            return -1
+        for visible_row, file_index in enumerate(self._visible_rows):
+            if file_index == self._current_row:
+                return visible_row
+        return -1
+
+    def _toggle_do_not_rename(self) -> None:
+        if not self.do_not_rename_checkbox.isEnabled():
+            return
+        self.do_not_rename_checkbox.toggle()
+
+    def _toggle_cover_image(self) -> None:
+        if not self.set_as_cover_image_checkbox.isEnabled():
+            return
+        self.set_as_cover_image_checkbox.toggle()
+
+    def _update_navigation_buttons(self) -> None:
+        visible_row = self._visible_row_for_current_selection()
+        has_files = bool(self._visible_rows)
+        self.previous_button.setEnabled(has_files and visible_row > 0)
+        self.next_button.setEnabled(has_files and 0 <= visible_row < len(self._visible_rows) - 1)
+
+    def _review_note_text(self, file_item: FileItem) -> str:
+        if file_item.status is FileStatus.UNMATCHED:
+            return "No rule matched this filename stem. Add or adjust a rule in Settings -> Rules if this file should be classified automatically."
+        if file_item.status is FileStatus.CONFLICT:
+            return "This file cannot be applied yet because its target name collides with another file or an existing filename."
+        if file_item.status is FileStatus.PROTECTED:
+            return "This file is protected from automatic rename, usually because it is a disk image."
+        if file_item.status is FileStatus.DONE:
+            return "This file already matches its normalized output name."
+        if file_item.status is FileStatus.READY:
+            return "This file is ready to be processed during the next apply step."
+        return ""

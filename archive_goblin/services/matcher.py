@@ -7,7 +7,7 @@ from archive_goblin.models.file_item import FileItem
 from archive_goblin.models.rule import FileType, Rule
 
 
-PROTECTED_DISK_IMAGE_EXTENSIONS = {
+DEFAULT_PROTECTED_DISK_IMAGE_EXTENSIONS = {
     ".cue",
     ".ccd",
     ".img",
@@ -21,9 +21,18 @@ BUILTIN_COVER_COPY_RE = re.compile(r"^000-cover-image-01$", re.IGNORECASE)
 
 
 class RuleMatcher:
-    def classify(self, path: Path, rules: list[Rule]) -> FileItem:
+    def classify(
+        self,
+        path: Path,
+        rules: list[Rule],
+        protected_extensions: list[str] | set[str] | None = None,
+    ) -> FileItem:
+        active_protected_extensions = {
+            self.normalize_extension(extension)
+            for extension in (protected_extensions or DEFAULT_PROTECTED_DISK_IMAGE_EXTENSIONS)
+        }
         extension = path.suffix.casefold()
-        if extension in PROTECTED_DISK_IMAGE_EXTENSIONS:
+        if extension in active_protected_extensions:
             return FileItem(
                 path=path,
                 detected_type=FileType.DISK_IMAGE,
@@ -108,3 +117,12 @@ class RuleMatcher:
         if 900 <= prefix <= 999:
             return FileType.EXTRA, (prefix - 900) + 1
         return None
+
+    @staticmethod
+    def normalize_extension(value: str) -> str:
+        cleaned = value.strip().casefold()
+        if not cleaned:
+            return ""
+        if not cleaned.startswith("."):
+            cleaned = f".{cleaned}"
+        return cleaned

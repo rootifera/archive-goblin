@@ -41,6 +41,12 @@ class RuleMatcherTests(unittest.TestCase):
         self.assertTrue(item.is_cover_image_copy)
         self.assertEqual(item.type, FileType.EXTRA)
 
+    def test_uses_configured_protected_extensions(self) -> None:
+        item = self.matcher.classify(Path("/tmp/game.rom"), [], protected_extensions=["rom", ".iso"])
+
+        self.assertEqual(item.type, FileType.DISK_IMAGE)
+        self.assertTrue(item.is_protected)
+
 
 if __name__ == "__main__":
     unittest.main()
