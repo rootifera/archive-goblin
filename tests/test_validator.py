@@ -101,6 +101,42 @@ class RenameValidatorTests(unittest.TestCase):
             self.assertEqual(item.proposed_name, "200-disk-01.iso")
             self.assertEqual(item.status, FileStatus.READY)
 
+    def test_protected_disk_image_can_use_manual_name_override(self) -> None:
+        with TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            path = folder / "track01.iso"
+            self._write_file(path)
+            item = FileItem(
+                path=path,
+                detected_type=FileType.DISK_IMAGE,
+                type=FileType.DISK_IMAGE,
+                detected_index=None,
+                index=None,
+                is_protected=True,
+                allow_protected_rename=True,
+                manual_proposed_name="500-original-soundtrack-01.iso",
+            )
+            self.naming.update_file_name(item)
+
+            self.validator.validate(folder, [item])
+
+            self.assertEqual(item.proposed_name, "500-original-soundtrack-01.iso")
+            self.assertEqual(item.status, FileStatus.READY)
+
+    def test_protected_matched_file_manual_name_overrides_rule_name(self) -> None:
+        with TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            item = self._make_file(folder, "cd.iso", FileType.MEDIA_SCAN, index=1)
+            item.is_protected = True
+            item.allow_protected_rename = True
+            item.manual_proposed_name = "disc-01"
+            self.naming.update_file_name(item)
+
+            self.validator.validate(folder, [item])
+
+            self.assertEqual(item.proposed_name, "disc-01.iso")
+            self.assertEqual(item.status, FileStatus.READY)
+
     def _make_file(self, folder: Path, name: str, file_type: FileType, index: int) -> FileItem:
         path = folder / name
         self._write_file(path)

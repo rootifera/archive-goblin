@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 from archive_goblin.models.file_item import FileItem
 from archive_goblin.models.rule import FileType, Rule, coerce_file_type
@@ -19,7 +20,16 @@ class NamingService:
         file_item.descriptor = descriptor
         file_item.cover_image_name = self._cover_image_name_for(file_item)
 
-        if file_item.do_not_rename or (file_item.is_protected and not file_item.allow_protected_rename) or file_item.type in {
+        if file_item.do_not_rename or (file_item.is_protected and not file_item.allow_protected_rename):
+            file_item.proposed_name = file_item.original_name
+            return
+
+        manual_proposed_name = self._manual_proposed_name_for(file_item)
+        if manual_proposed_name is not None:
+            file_item.proposed_name = manual_proposed_name
+            return
+
+        if file_item.type in {
             FileType.OTHER,
             FileType.IGNORE,
             FileType.DISK_IMAGE,
@@ -119,3 +129,20 @@ class NamingService:
         cleaned = re.sub(r"[^a-z0-9-]+", "-", cleaned)
         cleaned = re.sub(r"-{2,}", "-", cleaned)
         return cleaned.strip("-")
+
+    def _manual_proposed_name_for(self, file_item: FileItem) -> str | None:
+        if not (file_item.is_protected and file_item.allow_protected_rename):
+            return None
+
+        candidate = (file_item.manual_proposed_name or "").strip()
+        if not candidate:
+            return None
+
+        candidate = candidate.replace("\\", "-").replace("/", "-")
+        candidate = Path(candidate).name.strip()
+        if not candidate:
+            return None
+
+        if "." not in candidate and file_item.extension:
+            candidate = f"{candidate}{file_item.extension}"
+        return candidate

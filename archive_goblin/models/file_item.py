@@ -28,6 +28,7 @@ class FileItem:
     rule_output_name: str | None = None
     descriptor: str | None = None
     proposed_name: str | None = None
+    manual_proposed_name: str | None = None
     cover_image_name: str | None = None
     is_protected: bool = False
     is_cover_image_copy: bool = False

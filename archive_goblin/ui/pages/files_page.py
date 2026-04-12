@@ -80,31 +80,44 @@ class FilesPage(QWidget):
         detail_layout.addWidget(self.preview, 1)
 
         form_layout = QFormLayout()
+        form_layout.setFormAlignment(Qt.AlignLeft | Qt.AlignTop)
+        form_layout.setLabelAlignment(Qt.AlignLeft)
         self.original_name_label = QLabel("Select a file")
+        self.original_name_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.detected_type_label = QLabel("—")
+        self.detected_type_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.full_name_edit = QLineEdit()
         self.full_name_edit.setReadOnly(True)
+        self.full_name_edit.setPlaceholderText("Enable protected rename to edit the final filename")
         self.cover_copy_edit = QLineEdit()
         self.cover_copy_edit.setReadOnly(True)
         self.allow_protected_rename_checkbox = QCheckBox("Allow rename for protected file")
         self.set_as_cover_image_checkbox = QCheckBox("Set as cover image")
         self.do_not_rename_checkbox = QCheckBox("Do not rename")
         self.status_label = QLabel("—")
+        self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.status_label.setFrameShape(QFrame.StyledPanel)
         self.status_label.setMargin(6)
+        self.review_note_title_label = QLabel("Review Note")
+        self.review_note_title_label.setStyleSheet("font-weight:600;")
         self.review_note_label = QLabel("")
+        self.review_note_label.setAlignment(Qt.AlignLeft | Qt.AlignTop)
         self.review_note_label.setWordWrap(True)
         self.review_note_label.setStyleSheet("color:#7c8796;")
+        self.review_note_label.setFrameShape(QFrame.StyledPanel)
+        self.review_note_label.setMargin(8)
+        self.review_note_label.setMinimumHeight(72)
         form_layout.addRow("Original", self.original_name_label)
         form_layout.addRow("Detected Type", self.detected_type_label)
-        form_layout.addRow("Output", self.full_name_edit)
+        form_layout.addRow("Final Name", self.full_name_edit)
         form_layout.addRow("Cover Copy", self.cover_copy_edit)
         form_layout.addRow("", self.allow_protected_rename_checkbox)
         form_layout.addRow("", self.set_as_cover_image_checkbox)
         form_layout.addRow("", self.do_not_rename_checkbox)
         form_layout.addRow("Status", self.status_label)
-        form_layout.addRow("Review Note", self.review_note_label)
         detail_layout.addLayout(form_layout)
+        detail_layout.addWidget(self.review_note_title_label)
+        detail_layout.addWidget(self.review_note_label)
         splitter.addWidget(detail_widget)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
@@ -124,6 +137,8 @@ class FilesPage(QWidget):
         self.allow_protected_rename_checkbox.toggled.connect(self._emit_detail_change)
         self.set_as_cover_image_checkbox.toggled.connect(self._emit_detail_change)
         self.do_not_rename_checkbox.toggled.connect(self._emit_detail_change)
+        self.full_name_edit.editingFinished.connect(self._emit_name_change)
+        self.full_name_edit.returnPressed.connect(self._emit_name_change)
         self.previous_button.clicked.connect(lambda: self._step_selection(-1))
         self.next_button.clicked.connect(lambda: self._step_selection(1))
 
@@ -149,12 +164,30 @@ class FilesPage(QWidget):
         if self._updating or self._current_row < 0 or self._current_row >= len(self._files):
             return
 
+        allow_protected_rename = self.allow_protected_rename_checkbox.isChecked()
+        if allow_protected_rename and self.do_not_rename_checkbox.isChecked():
+            self.do_not_rename_checkbox.setChecked(False)
+
         changes = {
-            "allow_protected_rename": self.allow_protected_rename_checkbox.isChecked(),
+            "allow_protected_rename": allow_protected_rename,
             "set_as_cover_image": self.set_as_cover_image_checkbox.isChecked(),
             "do_not_rename": self.do_not_rename_checkbox.isChecked(),
         }
         self.item_edited.emit(self._current_row, changes)
+
+    def _emit_name_change(self) -> None:
+        if self._updating or self._current_row < 0 or self._current_row >= len(self._files):
+            return
+
+        file_item = self._files[self._current_row]
+        is_manual_name_editable = file_item.is_protected and file_item.allow_protected_rename and not file_item.is_cover_image_copy
+        if not is_manual_name_editable:
+            return
+
+        self.item_edited.emit(
+            self._current_row,
+            {"manual_proposed_name": self.full_name_edit.text().strip()},
+        )
 
     def _refresh_details(self) -> None:
         self._updating = True
@@ -163,6 +196,7 @@ class FilesPage(QWidget):
                 self.original_name_label.setText("Select a file")
                 self.detected_type_label.setText("—")
                 self.full_name_edit.clear()
+                self.full_name_edit.setReadOnly(True)
                 self.cover_copy_edit.clear()
                 self.allow_protected_rename_checkbox.setChecked(False)
                 self.set_as_cover_image_checkbox.setChecked(False)
@@ -186,6 +220,17 @@ class FilesPage(QWidget):
             self.status_label.setStyleSheet(self._status_style(file_item.status))
             self.review_note_label.setText(self._review_note_text(file_item))
             self.preview.load_image(file_item.path)
+            is_manual_name_editable = (
+                file_item.is_protected
+                and file_item.allow_protected_rename
+                and not file_item.is_cover_image_copy
+            )
+            self.full_name_edit.setReadOnly(not is_manual_name_editable)
+            self.full_name_edit.setPlaceholderText(
+                "Press Enter to apply a custom filename for this protected file"
+                if is_manual_name_editable
+                else "Enable protected rename to edit the final filename"
+            )
             allow_cover_copy = (
                 (not file_item.is_protected or file_item.allow_protected_rename)
                 and file_item.type is not FileType.DISK_IMAGE
@@ -194,7 +239,8 @@ class FilesPage(QWidget):
             self.allow_protected_rename_checkbox.setEnabled(file_item.is_protected and not file_item.is_cover_image_copy)
             self.set_as_cover_image_checkbox.setEnabled(allow_cover_copy)
             self.do_not_rename_checkbox.setEnabled(
-                (not file_item.is_protected or file_item.allow_protected_rename)
+                not file_item.allow_protected_rename
+                and (not file_item.is_protected or file_item.allow_protected_rename)
                 and not file_item.is_cover_image_copy
             )
             self._update_navigation_buttons()
@@ -317,6 +363,8 @@ class FilesPage(QWidget):
             return "This file cannot be applied yet because its target name collides with another file or an existing filename."
         if file_item.status is FileStatus.PROTECTED:
             return "This file is protected from automatic rename, usually because of its extension. Enable the protected-file override to allow renaming for this one file."
+        if file_item.is_protected and file_item.allow_protected_rename:
+            return "This protected file is in manual rename mode. Edit the Final Name field and press Enter to apply the filename for this file."
         if file_item.status is FileStatus.DONE:
             return "This file already matches its normalized output name."
         if file_item.status is FileStatus.READY:
