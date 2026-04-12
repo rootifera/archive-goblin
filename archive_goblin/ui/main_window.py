@@ -3,12 +3,13 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QMainWindow, QMessageBox
+from PySide6.QtWidgets import QCheckBox, QMainWindow, QMessageBox
 
 from archive_goblin.models.file_item import FileItem, FileStatus
 from archive_goblin.models.rule import Rule, coerce_file_type
 from archive_goblin.models.session import Session
 from archive_goblin.services.matcher import RuleMatcher
+from archive_goblin.services.mount_detector import MountDetector
 from archive_goblin.services.naming import NamingService
 from archive_goblin.services.renamer import RenameService
 from archive_goblin.services.scanner import FolderScanner
@@ -27,18 +28,22 @@ class MainWindow(QMainWindow):
         self.settings_store = SettingsStore()
         self.scanner = FolderScanner()
         self.matcher = RuleMatcher()
+        self.mount_detector = MountDetector()
         self.naming_service = NamingService()
         self.validator = RenameValidator()
         self.renamer = RenameService()
+        self._warned_mount_points: set[str] = set()
 
-        rules, protected_disk_image_extensions = self.settings_store.load_settings()
+        rules, protected_disk_image_extensions, show_smb_warning = self.settings_store.load_settings()
         self.session = Session(
             rules=rules,
             protected_disk_image_extensions=protected_disk_image_extensions,
+            show_smb_warning=show_smb_warning,
         )
         self.settings_store.save_settings(
             self.session.rules,
             self.session.protected_disk_image_extensions,
+            self.session.show_smb_warning,
         )
 
         self.files_page = FilesPage()
@@ -77,6 +82,7 @@ class MainWindow(QMainWindow):
 
     def open_folder(self, folder: Path) -> None:
         self.session.folder = folder
+        self._maybe_warn_about_network_share(folder)
         self._reload_files()
 
     def rescan_folder(self) -> None:
@@ -89,6 +95,7 @@ class MainWindow(QMainWindow):
         self.settings_store.save_settings(
             self.session.rules,
             self.session.protected_disk_image_extensions,
+            self.session.show_smb_warning,
         )
         self.settings_dialog.set_settings(
             self.session.rules,
@@ -212,3 +219,36 @@ class MainWindow(QMainWindow):
             f"Renames: {rename_count}\n"
             f"Cover copies: {cover_copy_count}"
         )
+
+    def _maybe_warn_about_network_share(self, folder: Path) -> None:
+        mount_details = self.mount_detector.detect(folder)
+        if mount_details is None or not mount_details.is_smb_share:
+            return
+
+        mount_key = f"{mount_details.mount_point}|{mount_details.filesystem_type}|{mount_details.source}"
+        if mount_key in self._warned_mount_points:
+            return
+
+        self._warned_mount_points.add(mount_key)
+        if not self.session.show_smb_warning:
+            return
+
+        message_box = QMessageBox(self)
+        message_box.setWindowTitle("SMB Share Detected")
+        message_box.setIcon(QMessageBox.Information)
+        message_box.setText(
+            "This folder appears to be on an SMB/CIFS share.\n\n"
+            "Archive Goblin will still work, but file visibility and rename behavior can be flaky on network shares. "
+            "For the most reliable results, prefer a local folder when possible."
+        )
+        dont_show_checkbox = QCheckBox("Acknowledge - don't show again")
+        message_box.setCheckBox(dont_show_checkbox)
+        message_box.exec()
+
+        if dont_show_checkbox.isChecked():
+            self.session.show_smb_warning = False
+            self.settings_store.save_settings(
+                self.session.rules,
+                self.session.protected_disk_image_extensions,
+                self.session.show_smb_warning,
+            )

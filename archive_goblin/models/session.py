@@ -11,5 +11,6 @@ from archive_goblin.models.rule import Rule
 class Session:
     rules: list[Rule] = field(default_factory=list)
     protected_disk_image_extensions: list[str] = field(default_factory=list)
+    show_smb_warning: bool = True
     folder: Path | None = None
     files: list[FileItem] = field(default_factory=list)
