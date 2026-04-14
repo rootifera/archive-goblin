@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PySide6.QtGui import QColor, QBrush
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -48,6 +49,10 @@ class UploadProgressDialog(QDialog):
         self.buttons.button(QDialogButtonBox.Close).clicked.connect(self.accept)
         layout.addWidget(self.buttons)
 
+    def _set_item_state(self, item: QListWidgetItem, prefix: str, file_name: str, color: str) -> None:
+        item.setText(f"[{prefix}] {file_name}")
+        item.setForeground(QBrush(QColor(color)))
+
     def start(self, file_names: list[str]) -> None:
         self.status_label.setText(f"Uploading {len(file_names)} file(s)...")
         self.current_file_label.setText("Current file: —")
@@ -57,7 +62,9 @@ class UploadProgressDialog(QDialog):
         self.current_item_progress_bar.setValue(0)
         self.progress_list.clear()
         for name in file_names:
-            self.progress_list.addItem(QListWidgetItem(f"[Pending] {name}"))
+            item = QListWidgetItem()
+            self._set_item_state(item, "Pending", name, "#9aa3ad")
+            self.progress_list.addItem(item)
         self.buttons.button(QDialogButtonBox.Close).setEnabled(False)
 
     def mark_file_started(self, index: int, file_name: str) -> None:
@@ -65,7 +72,7 @@ class UploadProgressDialog(QDialog):
         self.current_item_progress_bar.setRange(0, 0)
         item = self.progress_list.item(index)
         if item is not None:
-            item.setText(f"[Uploading] {file_name}")
+            self._set_item_state(item, "Uploading", file_name, "#d9b46b")
 
     def mark_file_finished(self, index: int, file_name: str, completed: int) -> None:
         self.overall_progress_bar.setValue(completed)
@@ -73,7 +80,7 @@ class UploadProgressDialog(QDialog):
         self.current_item_progress_bar.setValue(0)
         item = self.progress_list.item(index)
         if item is not None:
-            item.setText(f"[Uploaded] {file_name}")
+            self._set_item_state(item, "Done", file_name, "#6fb27f")
         self.current_file_label.setText("Current file: waiting for next file")
 
     def finish_success(self, message: str) -> None:

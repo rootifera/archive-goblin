@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 
 from PySide6.QtCore import Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -54,6 +55,8 @@ class MetadataPage(QWidget):
         self.title_edit = QLineEdit()
         self.title_error_label = self._build_error_label()
         self.date_edit = QLineEdit()
+        self.date_edit.setPlaceholderText("YYYY or YYYY-MM-DD")
+        self.date_edit.setToolTip("Use YYYY, YYYY-MM, or YYYY-MM-DD.")
         self.developer_edit = QLineEdit()
         self.publisher_edit = QLineEdit()
         self.platform_edit = QLineEdit()
@@ -130,6 +133,17 @@ class MetadataPage(QWidget):
         self.notes_edit.textChanged.connect(self._refresh_derived_fields)
         self.page_url_edit.textEdited.connect(self._clear_availability_status)
 
+        for line_edit in (
+            self.title_edit,
+            self.date_edit,
+            self.developer_edit,
+            self.publisher_edit,
+            self.platform_edit,
+            self.tags_edit,
+            self.page_url_edit,
+        ):
+            line_edit.editingFinished.connect(lambda edit=line_edit: self._trim_line_edit(edit))
+
         self.set_metadata(self._metadata)
 
     def set_metadata(self, metadata: ProjectMetadata) -> None:
@@ -169,11 +183,11 @@ class MetadataPage(QWidget):
 
     def build_metadata(self) -> ProjectMetadata | None:
         metadata = ProjectMetadata(
-            title=self.title_edit.text(),
-            date=self.date_edit.text(),
-            publisher=self.publisher_edit.text(),
-            developer=self.developer_edit.text(),
-            platform=self.platform_edit.text(),
+            title=self.title_edit.text().strip(),
+            date=self.date_edit.text().strip(),
+            publisher=self.publisher_edit.text().strip(),
+            developer=self.developer_edit.text().strip(),
+            platform=self.platform_edit.text().strip(),
             language=self.archive_metadata_service.language_code_for_value(
                 self.language_combo.currentData() or self.language_combo.currentText()
             ),
@@ -188,12 +202,12 @@ class MetadataPage(QWidget):
                 ARCHIVE_COLLECTION_OPTIONS,
                 self.collection_combo.currentData() or self.collection_combo.currentText(),
             ),
-            page_url_override=self.page_url_edit.text(),
+            page_url_override=self.page_url_edit.text().strip(),
             description="",
-            notes=self.notes_edit.toPlainText(),
+            notes=self.notes_edit.toPlainText().strip(),
             use_default_tags=self.use_default_tags_checkbox.isChecked(),
         )
-        metadata.set_tags_from_text(self.tags_edit.text())
+        metadata.set_tags_from_text(self.tags_edit.text().strip())
         metadata.description = self.archive_metadata_service.generate_description(
             metadata,
             self._files,
@@ -346,6 +360,12 @@ class MetadataPage(QWidget):
             self.page_url_edit.setText(value)
         finally:
             self._setting_page_url_programmatically = False
+
+    def _trim_line_edit(self, line_edit: QLineEdit) -> None:
+        trimmed = line_edit.text().strip()
+        if trimmed == line_edit.text():
+            return
+        line_edit.setText(trimmed)
 
 
 class MetadataDialog(QDialog):
