@@ -26,6 +26,11 @@ class UploadProgressDialog(QDialog):
         self.current_file_label = QLabel("Current file: —")
         self.current_item_progress_bar = QProgressBar()
         self.progress_list = QListWidget()
+        self.help_label = QLabel(
+            "Archive.org uploads can be slow, especially for large files. Please be patient while the current item is uploading."
+        )
+        self.help_label.setWordWrap(True)
+        self.help_label.setStyleSheet("color:#7c8796;")
 
         layout.addWidget(self.status_label)
         layout.addWidget(self.overall_progress_label)
@@ -34,6 +39,7 @@ class UploadProgressDialog(QDialog):
         layout.addWidget(self.current_file_label)
         layout.addWidget(self.current_item_progress_bar)
         layout.addWidget(self.progress_list, 1)
+        layout.addWidget(self.help_label)
 
         self.buttons = QDialogButtonBox(QDialogButtonBox.Close)
         self.buttons.button(QDialogButtonBox.Close).setEnabled(False)
@@ -64,11 +70,11 @@ class UploadProgressDialog(QDialog):
     def mark_file_finished(self, index: int, file_name: str, completed: int) -> None:
         self.overall_progress_bar.setValue(completed)
         self.current_item_progress_bar.setRange(0, 1)
-        self.current_item_progress_bar.setValue(1)
+        self.current_item_progress_bar.setValue(0)
         item = self.progress_list.item(index)
         if item is not None:
             item.setText(f"[Uploaded] {file_name}")
-        self.current_file_label.setText(f"Current file: {file_name}")
+        self.current_file_label.setText("Current file: waiting for next file")
 
     def finish_success(self, message: str) -> None:
         self.status_label.setText(message)
@@ -80,4 +86,5 @@ class UploadProgressDialog(QDialog):
     def finish_failure(self, message: str) -> None:
         self.status_label.setText(message)
         self.current_item_progress_bar.setRange(0, 1)
+        self.current_item_progress_bar.setValue(0)
         self.buttons.button(QDialogButtonBox.Close).setEnabled(True)

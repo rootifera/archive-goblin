@@ -584,6 +584,7 @@ class MainWindow(QMainWindow):
                 f"{result.message}<br><br><a href=\"{page_url}\">{page_url}</a>" if page_url else result.message,
                 QMessageBox.Information,
             )
+            self.upload_progress_dialog.accept()
         else:
             self.upload_progress_dialog.finish_failure(result.message)
             self._show_rich_message(

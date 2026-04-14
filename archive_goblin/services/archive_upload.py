@@ -70,7 +70,7 @@ class ArchiveUploadService:
             secret_key=secret_key.strip(),
         )
 
-    def upload_plan(self, plan: ArchiveUploadPlan, progress_callback=None) -> ArchiveUploadResult:
+    def upload_plan(self, plan: ArchiveUploadPlan, started_callback=None, finished_callback=None) -> ArchiveUploadResult:
         try:
             from internetarchive import upload
         except ImportError:
@@ -80,6 +80,8 @@ class ArchiveUploadService:
         for index, file_path in enumerate(plan.file_paths):
             file_name = file_path.name
             metadata_payload = plan.metadata_payload if index == 0 else None
+            if started_callback is not None:
+                started_callback(index, file_name)
             try:
                 responses = upload(
                     plan.identifier,
@@ -108,8 +110,8 @@ class ArchiveUploadService:
                 )
 
             completed += 1
-            if progress_callback is not None:
-                progress_callback(index, file_name, completed)
+            if finished_callback is not None:
+                finished_callback(index, file_name, completed)
 
         return ArchiveUploadResult(True, f"Uploaded {len(plan.file_paths)} file(s) to Archive.org.")
 
