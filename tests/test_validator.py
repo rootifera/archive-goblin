@@ -55,7 +55,7 @@ class RenameValidatorTests(unittest.TestCase):
 
             self.assertEqual(item.status, FileStatus.DONE)
 
-    def test_builtin_cover_copy_stays_ready(self) -> None:
+    def test_builtin_cover_copy_stays_done(self) -> None:
         with TemporaryDirectory() as tmp:
             folder = Path(tmp)
             path = folder / "000-cover-image-01.jpg"
@@ -72,7 +72,7 @@ class RenameValidatorTests(unittest.TestCase):
 
             self.validator.validate(folder, [item])
 
-            self.assertEqual(item.status, FileStatus.READY)
+            self.assertEqual(item.status, FileStatus.DONE)
 
     def test_do_not_rename_with_cover_copy_is_ready(self) -> None:
         with TemporaryDirectory() as tmp:

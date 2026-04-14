@@ -151,7 +151,7 @@ class FilesPage(QWidget):
         self._apply_filter()
 
     def _choose_folder(self) -> None:
-        selected = QFileDialog.getExistingDirectory(self, "Open Folder")
+        selected = QFileDialog.getExistingDirectory(self, "Open Folder", str(Path.home()))
         if selected:
             self.folder_chosen.emit(Path(selected))
 

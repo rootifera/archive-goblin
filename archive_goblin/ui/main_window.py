@@ -2,20 +2,26 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtGui import QAction
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QCheckBox, QMainWindow, QMessageBox
 
 from archive_goblin.models.file_item import FileItem, FileStatus
+from archive_goblin.models.project_metadata import ProjectMetadata
 from archive_goblin.models.rule import Rule, coerce_file_type
 from archive_goblin.models.session import Session
+from archive_goblin.services.archive_metadata import ArchiveMetadataService
 from archive_goblin.services.matcher import RuleMatcher
 from archive_goblin.services.mount_detector import MountDetector
 from archive_goblin.services.naming import NamingService
 from archive_goblin.services.renamer import RenameService
 from archive_goblin.services.scanner import FolderScanner
 from archive_goblin.services.validator import RenameValidator
+from archive_goblin.storage.project_store import ProjectStore
 from archive_goblin.storage.settings_store import SettingsStore
 from archive_goblin.ui.pages.files_page import FilesPage
+from archive_goblin.ui.pages.metadata_page import MetadataDialog
+from archive_goblin.ui.pages.metadata_settings_page import MetadataSettingsDialog
 from archive_goblin.ui.pages.settings_page import SettingsDialog
 
 
@@ -26,30 +32,48 @@ class MainWindow(QMainWindow):
         self.resize(1480, 820)
 
         self.settings_store = SettingsStore()
+        self.project_store = ProjectStore()
         self.scanner = FolderScanner()
         self.matcher = RuleMatcher()
         self.mount_detector = MountDetector()
+        self.archive_metadata_service = ArchiveMetadataService()
         self.naming_service = NamingService()
         self.validator = RenameValidator()
         self.renamer = RenameService()
         self._warned_mount_points: set[str] = set()
 
-        rules, protected_disk_image_extensions, show_smb_warning = self.settings_store.load_settings()
+        rules, protected_disk_image_extensions, show_smb_warning, page_url_pattern, default_tags = self.settings_store.load_settings()
         self.session = Session(
             rules=rules,
             protected_disk_image_extensions=protected_disk_image_extensions,
             show_smb_warning=show_smb_warning,
+            page_url_pattern=page_url_pattern,
+            default_tags=default_tags,
         )
         self.settings_store.save_settings(
             self.session.rules,
             self.session.protected_disk_image_extensions,
             self.session.show_smb_warning,
+            self.session.page_url_pattern,
+            self.session.default_tags,
         )
 
         self.files_page = FilesPage()
         self.settings_dialog = SettingsDialog(
             self.session.rules,
             self.session.protected_disk_image_extensions,
+            self,
+        )
+        self.metadata_settings_dialog = MetadataSettingsDialog(
+            self.session.page_url_pattern,
+            self.session.default_tags,
+            self,
+        )
+        self.metadata_dialog = MetadataDialog(
+            self.session.metadata,
+            self.session.page_url_pattern,
+            self.session.default_tags,
+            self.session.files,
             self,
         )
         self.setCentralWidget(self.files_page)
@@ -60,16 +84,59 @@ class MainWindow(QMainWindow):
         self.files_page.apply_requested.connect(self.apply_renames)
         self.files_page.rescan_requested.connect(self.rescan_folder)
         self.settings_dialog.settings_changed.connect(self.on_settings_changed)
+        self.metadata_settings_dialog.settings_changed.connect(self.on_metadata_settings_changed)
+        self.metadata_dialog.metadata_saved.connect(self.on_metadata_saved)
 
         self.files_page.set_files(self.session.folder, self.session.files)
+        self.statusBar().showMessage("Open a folder to begin reviewing files and metadata.")
 
     def _build_menu(self) -> None:
         menu_bar = self.menuBar()
+        file_menu = menu_bar.addMenu("File")
+        project_menu = menu_bar.addMenu("Project")
         settings_menu = menu_bar.addMenu("Settings")
 
+        open_folder_action = QAction("Open Folder...", self)
+        open_folder_action.setShortcut(QKeySequence("Ctrl+O"))
+        open_folder_action.setShortcutContext(Qt.ApplicationShortcut)
+        open_folder_action.triggered.connect(self.files_page._choose_folder)
+        self.addAction(open_folder_action)
+        file_menu.addAction(open_folder_action)
+
+        rescan_action = QAction("Rescan", self)
+        rescan_action.setShortcut(QKeySequence("Ctrl+R"))
+        rescan_action.setShortcutContext(Qt.ApplicationShortcut)
+        rescan_action.triggered.connect(self.rescan_folder)
+        self.addAction(rescan_action)
+        file_menu.addAction(rescan_action)
+
+        apply_renames_action = QAction("Apply Renames", self)
+        apply_renames_action.setShortcut(QKeySequence("Ctrl+Return"))
+        apply_renames_action.setShortcutContext(Qt.ApplicationShortcut)
+        apply_renames_action.triggered.connect(self.apply_renames)
+        self.addAction(apply_renames_action)
+        file_menu.addAction(apply_renames_action)
+
+        edit_metadata_action = QAction("Metadata...", self)
+        edit_metadata_action.setShortcut(QKeySequence("Ctrl+P"))
+        edit_metadata_action.setShortcutContext(Qt.ApplicationShortcut)
+        edit_metadata_action.triggered.connect(self.open_metadata_dialog)
+        self.addAction(edit_metadata_action)
+        project_menu.addAction(edit_metadata_action)
+
         edit_rules_action = QAction("Rules...", self)
+        edit_rules_action.setShortcut(QKeySequence("Ctrl+S, R"))
+        edit_rules_action.setShortcutContext(Qt.ApplicationShortcut)
         edit_rules_action.triggered.connect(self.open_rules_dialog)
+        self.addAction(edit_rules_action)
         settings_menu.addAction(edit_rules_action)
+
+        edit_metadata_settings_action = QAction("Metadata...", self)
+        edit_metadata_settings_action.setShortcut(QKeySequence("Ctrl+S, M"))
+        edit_metadata_settings_action.setShortcutContext(Qt.ApplicationShortcut)
+        edit_metadata_settings_action.triggered.connect(self.open_metadata_settings_dialog)
+        self.addAction(edit_metadata_settings_action)
+        settings_menu.addAction(edit_metadata_settings_action)
 
     def open_rules_dialog(self) -> None:
         self.settings_dialog.set_settings(
@@ -80,10 +147,36 @@ class MainWindow(QMainWindow):
         self.settings_dialog.raise_()
         self.settings_dialog.activateWindow()
 
+    def open_metadata_settings_dialog(self) -> None:
+        self.metadata_settings_dialog.set_settings(
+            self.session.page_url_pattern,
+            self.session.default_tags,
+        )
+        self.metadata_settings_dialog.show()
+        self.metadata_settings_dialog.raise_()
+        self.metadata_settings_dialog.activateWindow()
+
+    def open_metadata_dialog(self) -> None:
+        self.metadata_dialog.set_metadata(self.session.metadata)
+        self.metadata_dialog.set_context(self.session.page_url_pattern, self.session.default_tags, self.session.files)
+        if self.session.folder is None:
+            QMessageBox.information(
+                self,
+                "No Folder",
+                "Open a folder before editing project metadata.",
+            )
+            return
+        self.metadata_dialog.show()
+        self.metadata_dialog.raise_()
+        self.metadata_dialog.activateWindow()
+
     def open_folder(self, folder: Path) -> None:
         self.session.folder = folder
+        self.session.metadata = self.project_store.load_metadata(folder)
+        self.metadata_dialog.set_metadata(self.session.metadata)
         self._maybe_warn_about_network_share(folder)
         self._reload_files()
+        self._refresh_status_bar()
 
     def rescan_folder(self) -> None:
         if self.session.folder is not None:
@@ -96,6 +189,8 @@ class MainWindow(QMainWindow):
             self.session.rules,
             self.session.protected_disk_image_extensions,
             self.session.show_smb_warning,
+            self.session.page_url_pattern,
+            self.session.default_tags,
         )
         self.settings_dialog.set_settings(
             self.session.rules,
@@ -103,6 +198,28 @@ class MainWindow(QMainWindow):
         )
         if self.session.folder is not None:
             self._reload_files()
+
+    def on_metadata_settings_changed(self, page_url_pattern: str, default_tags: list[str]) -> None:
+        self.session.page_url_pattern = page_url_pattern
+        self.session.default_tags = list(default_tags)
+        self.settings_store.save_settings(
+            self.session.rules,
+            self.session.protected_disk_image_extensions,
+            self.session.show_smb_warning,
+            self.session.page_url_pattern,
+            self.session.default_tags,
+        )
+        self.metadata_settings_dialog.set_settings(
+            self.session.page_url_pattern,
+            self.session.default_tags,
+        )
+        self.metadata_dialog.set_context(self.session.page_url_pattern, self.session.default_tags, self.session.files)
+
+    def on_metadata_saved(self, metadata: ProjectMetadata) -> None:
+        self.session.metadata = metadata
+        self.project_store.save_metadata(self.session.folder, self.session.metadata)
+        self.metadata_dialog.set_metadata(self.session.metadata)
+        self._refresh_status_bar("Project metadata saved.")
 
     def on_file_edited(self, row: int, changes: dict[str, object]) -> None:
         if row < 0 or row >= len(self.session.files):
@@ -179,6 +296,8 @@ class MainWindow(QMainWindow):
 
         self.validator.validate(self.session.folder, self.session.files)
         self.files_page.set_files(self.session.folder, self.session.files)
+        self.metadata_dialog.set_context(self.session.page_url_pattern, self.session.default_tags, self.session.files)
+        self._refresh_status_bar()
 
     def _confirm_apply(self, ready_files: list[FileItem]) -> QMessageBox.StandardButton:
         rename_count = sum(1 for file_item in ready_files if file_item.has_pending_rename)
@@ -251,4 +370,15 @@ class MainWindow(QMainWindow):
                 self.session.rules,
                 self.session.protected_disk_image_extensions,
                 self.session.show_smb_warning,
+                self.session.page_url_pattern,
+                self.session.default_tags,
             )
+
+    def _refresh_status_bar(self, message: str | None = None) -> None:
+        if message is not None:
+            self.statusBar().showMessage(message, 3000)
+            return
+
+        metadata_summary = self.session.metadata.readiness_summary
+        folder_summary = self.session.folder.name if self.session.folder is not None else "No folder"
+        self.statusBar().showMessage(f"{folder_summary} | Metadata: {metadata_summary}")

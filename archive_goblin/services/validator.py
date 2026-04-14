@@ -41,7 +41,7 @@ class RenameValidator:
             has_cover_copy = file_item.has_pending_cover_copy
             if not has_rename and not has_cover_copy:
                 if file_item.is_cover_image_copy:
-                    file_item.status = FileStatus.READY
+                    file_item.status = FileStatus.DONE
                     continue
                 if file_item.do_not_rename:
                     file_item.status = FileStatus.UNCHANGED
