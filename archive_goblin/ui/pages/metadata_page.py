@@ -36,14 +36,17 @@ class MetadataPage(QWidget):
     def __init__(
         self,
         metadata: ProjectMetadata | None = None,
+        title_pattern: str = ArchiveMetadataService.default_title_pattern,
         page_url_pattern: str = ArchiveMetadataService.default_page_url_pattern,
         default_tags: list[str] | None = None,
     ) -> None:
         super().__init__()
         self._metadata = metadata or ProjectMetadata()
+        self._title_pattern = title_pattern
         self._page_url_pattern = page_url_pattern
         self._default_tags = list(default_tags or [])
         self._files: list[FileItem] = []
+        self._setting_page_url_programmatically = False
         self.archive_metadata_service = ArchiveMetadataService()
 
         layout = QVBoxLayout(self)
@@ -51,10 +54,9 @@ class MetadataPage(QWidget):
         self.title_edit = QLineEdit()
         self.title_error_label = self._build_error_label()
         self.date_edit = QLineEdit()
-        self.publisher_edit = QLineEdit()
         self.developer_edit = QLineEdit()
+        self.publisher_edit = QLineEdit()
         self.platform_edit = QLineEdit()
-        self.platform_error_label = self._build_error_label()
         self.language_combo = self._build_language_combo()
         self.license_combo = self._build_option_combo(ARCHIVE_LICENSE_OPTIONS)
         self.cc_allow_remixing_checkbox = QCheckBox("Allow Remixing")
@@ -92,10 +94,9 @@ class MetadataPage(QWidget):
         form_layout.addRow("Title", self.title_edit)
         form_layout.addRow("", self.title_error_label)
         form_layout.addRow("Date", self.date_edit)
-        form_layout.addRow("Publisher", self.publisher_edit)
         form_layout.addRow("Developer", self.developer_edit)
+        form_layout.addRow("Publisher", self.publisher_edit)
         form_layout.addRow("Platform", self.platform_edit)
-        form_layout.addRow("", self.platform_error_label)
         form_layout.addRow("Language", self.language_combo)
         form_layout.addRow("License", self.license_combo)
         form_layout.addRow("", self.cc_allow_remixing_checkbox)
@@ -148,19 +149,19 @@ class MetadataPage(QWidget):
         self.use_default_tags_checkbox.setChecked(metadata.use_default_tags)
         self._set_description_preview(metadata.description)
         self.notes_edit.setPlainText(metadata.notes)
-        self.page_url_edit.setText(
-            self.archive_metadata_service.build_page_url(self._page_url_pattern, metadata)
-        )
+        self._set_page_url_text(self.archive_metadata_service.build_page_url(self._page_url_pattern, metadata))
         self._clear_availability_status()
         self._refresh_license_controls()
         self._refresh_derived_fields()
 
     def set_context(
         self,
+        title_pattern: str,
         page_url_pattern: str,
         default_tags: list[str],
         files: list[FileItem] | None = None,
     ) -> None:
+        self._title_pattern = title_pattern
         self._page_url_pattern = page_url_pattern
         self._default_tags = list(default_tags)
         self._files = list(files or [])
@@ -193,7 +194,11 @@ class MetadataPage(QWidget):
             use_default_tags=self.use_default_tags_checkbox.isChecked(),
         )
         metadata.set_tags_from_text(self.tags_edit.text())
-        metadata.description = self.archive_metadata_service.generate_description(metadata, self._files)
+        metadata.description = self.archive_metadata_service.generate_description(
+            metadata,
+            self._files,
+            self._title_pattern,
+        )
         return metadata
 
     def _refresh_derived_fields(self) -> None:
@@ -201,10 +206,8 @@ class MetadataPage(QWidget):
         if metadata is None:
             return
         self._refresh_required_field_feedback(metadata)
-        if not self.archive_metadata_service.normalize_identifier_input(self.page_url_edit.text()):
-            self.page_url_edit.setText(
-                self.archive_metadata_service.build_page_url(self._page_url_pattern, metadata)
-            )
+        metadata.page_url_override = ""
+        self._set_page_url_text(self.archive_metadata_service.build_page_url(self._page_url_pattern, metadata))
         effective_tags = self.archive_metadata_service.effective_tags(metadata, self._default_tags)
         self.effective_tags_label.setText(", ".join(effective_tags) if effective_tags else "No tags")
         self._set_description_preview(metadata.description)
@@ -222,7 +225,7 @@ class MetadataPage(QWidget):
         if metadata is None:
             return
         metadata.page_url_override = ""
-        self.page_url_edit.setText(self.archive_metadata_service.build_page_url(self._page_url_pattern, metadata))
+        self._set_page_url_text(self.archive_metadata_service.build_page_url(self._page_url_pattern, metadata))
         self._clear_availability_status()
 
     def validate_page_url(self) -> bool:
@@ -306,12 +309,6 @@ class MetadataPage(QWidget):
             bool(metadata.title.strip()),
             "Title cannot be blank.",
         )
-        self._set_required_field_state(
-            self.platform_edit,
-            self.platform_error_label,
-            bool(metadata.platform.strip()),
-            "Platform cannot be blank.",
-        )
 
     def _set_required_field_state(
         self,
@@ -338,18 +335,27 @@ class MetadataPage(QWidget):
     def _set_description_preview(self, description: str) -> None:
         escaped = html.escape(description)
         escaped = escaped.replace(
-            "Prepared with Archive Goblin",
-            '<a href="https://github.com/rootifera/archive-goblin">Prepared with Archive Goblin</a>',
+            "https://github.com/rootifera/archive-goblin",
+            '<a href="https://github.com/rootifera/archive-goblin">https://github.com/rootifera/archive-goblin</a>',
         )
         self.description_edit.setHtml(escaped.replace("\n", "<br>"))
+
+    def _set_page_url_text(self, value: str) -> None:
+        self._setting_page_url_programmatically = True
+        try:
+            self.page_url_edit.setText(value)
+        finally:
+            self._setting_page_url_programmatically = False
 
 
 class MetadataDialog(QDialog):
     metadata_saved = Signal(object)
+    preview_requested = Signal(object)
 
     def __init__(
         self,
         metadata: ProjectMetadata | None = None,
+        title_pattern: str = ArchiveMetadataService.default_title_pattern,
         page_url_pattern: str = ArchiveMetadataService.default_page_url_pattern,
         default_tags: list[str] | None = None,
         files: list[FileItem] | None = None,
@@ -367,13 +373,15 @@ class MetadataDialog(QDialog):
         self.help_label.setStyleSheet("color:#7c8796;")
         layout.addWidget(self.help_label)
 
-        self.page = MetadataPage(metadata, page_url_pattern, default_tags)
-        self.page.set_context(page_url_pattern, default_tags or [], files)
+        self.page = MetadataPage(metadata, title_pattern, page_url_pattern, default_tags)
+        self.page.set_context(title_pattern, page_url_pattern, default_tags or [], files)
         layout.addWidget(self.page, 1)
 
         self.buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
+        self.save_and_preview_button = self.buttons.addButton("Save and Preview Upload", QDialogButtonBox.ActionRole)
         self.buttons.accepted.connect(self._save)
         self.buttons.rejected.connect(self.reject)
+        self.save_and_preview_button.clicked.connect(self._save_and_preview)
         layout.addWidget(self.buttons)
 
     def set_metadata(self, metadata: ProjectMetadata) -> None:
@@ -381,11 +389,12 @@ class MetadataDialog(QDialog):
 
     def set_context(
         self,
+        title_pattern: str,
         page_url_pattern: str,
         default_tags: list[str],
         files: list[FileItem] | None = None,
     ) -> None:
-        self.page.set_context(page_url_pattern, default_tags, files)
+        self.page.set_context(title_pattern, page_url_pattern, default_tags, files)
 
     def _save(self) -> None:
         metadata = self.page.build_metadata()
@@ -397,4 +406,17 @@ class MetadataDialog(QDialog):
             return
 
         self.metadata_saved.emit(metadata)
+        self.accept()
+
+    def _save_and_preview(self) -> None:
+        metadata = self.page.build_metadata()
+        if metadata is None:
+            QMessageBox.warning(self, "Invalid Metadata", "Could not build project metadata.")
+            return
+
+        if not self.page.validate_page_url():
+            return
+
+        self.metadata_saved.emit(metadata)
+        self.preview_requested.emit(metadata)
         self.accept()

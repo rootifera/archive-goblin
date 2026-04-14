@@ -59,7 +59,30 @@ ARCHIVE_LANGUAGE_OPTIONS = _parse_language_options()
 
 
 class ArchiveMetadataService:
+    default_title_pattern = "{title} ({release_year}) ({platform})"
     default_page_url_pattern = "{title}-{release_year}-{language}"
+
+    def format_display_title(self, metadata: ProjectMetadata, pattern: str | None = None) -> str:
+        title = metadata.title.strip() or "Untitled item"
+        release_year = self._release_year(metadata.date)
+        platform = metadata.platform.strip()
+        resolved_pattern = (pattern or self.default_title_pattern).strip() or self.default_title_pattern
+        values = {
+            "title": title,
+            "release_year": release_year,
+            "platform": platform,
+            "date": metadata.date.strip(),
+            "language": self.language_name_for_code(metadata.language).strip(),
+            "publisher": metadata.publisher.strip(),
+            "developer": metadata.developer.strip(),
+            "collection": metadata.collection.strip(),
+        }
+        rendered = resolved_pattern.format_map(_SafeFormatDict(values))
+        rendered = re.sub(r"\s+", " ", rendered).strip()
+        rendered = re.sub(r"\(\s*\)", "", rendered)
+        rendered = re.sub(r"\[\s*\]", "", rendered)
+        rendered = re.sub(r"\s{2,}", " ", rendered).strip(" -,:")
+        return rendered or title
 
     def build_identifier(self, pattern: str, metadata: ProjectMetadata) -> str:
         override = self.normalize_identifier_input(metadata.page_url_override)
@@ -173,19 +196,23 @@ class ArchiveMetadataService:
         cleaned = re.sub(r"-{2,}", "-", cleaned)
         return cleaned.strip("-")
 
-    def generate_description(self, metadata: ProjectMetadata, files: list[FileItem] | None = None) -> str:
-        release_year = self._release_year(metadata.date)
-        title = metadata.title.strip() or "Untitled item"
-        if release_year:
-            title = f"{title} ({release_year})"
-
+    def generate_description(
+        self,
+        metadata: ProjectMetadata,
+        files: list[FileItem] | None = None,
+        title_pattern: str | None = None,
+    ) -> str:
         lines: list[str] = []
-        lines.append(title)
+        lines.append(self.format_display_title(metadata, title_pattern))
 
-        credits = [value for value in (metadata.publisher.strip(), metadata.developer.strip()) if value]
-        if credits:
+        developer = metadata.developer.strip()
+        publisher = metadata.publisher.strip()
+        if developer or publisher:
             lines.append("")
-            lines.append(f"[{' - '.join(credits)}]")
+            if developer:
+                lines.append(f"Developer: {developer}")
+            if publisher:
+                lines.append(f"Publisher: {publisher}")
 
         counts = self._content_counts(files or [])
         lines.append("")
@@ -206,7 +233,8 @@ class ArchiveMetadataService:
             lines.append(notes)
 
         lines.append("")
-        lines.append("Prepared with Archive Goblin")
+        lines.append("Prepared with Archive Goblin:")
+        lines.append("https://github.com/rootifera/archive-goblin")
 
         return "\n".join(lines).strip()
 
@@ -275,3 +303,8 @@ class ArchiveMetadataService:
             return
         seen.add(lowered)
         values.append(cleaned)
+
+
+class _SafeFormatDict(dict[str, str]):
+    def __missing__(self, key: str) -> str:
+        return ""

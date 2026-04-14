@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import QCheckBox, QMainWindow, QMessageBox
 
@@ -17,12 +17,18 @@ from archive_goblin.services.naming import NamingService
 from archive_goblin.services.renamer import RenameService
 from archive_goblin.services.scanner import FolderScanner
 from archive_goblin.services.validator import RenameValidator
+from archive_goblin.services.archive_upload import ArchiveUploadService
+from archive_goblin.services.upload_preview import UploadPreviewService
 from archive_goblin.storage.project_store import ProjectStore
 from archive_goblin.storage.settings_store import SettingsStore
 from archive_goblin.ui.pages.files_page import FilesPage
+from archive_goblin.ui.pages.archive_settings_page import ArchiveSettingsDialog
 from archive_goblin.ui.pages.metadata_page import MetadataDialog
 from archive_goblin.ui.pages.metadata_settings_page import MetadataSettingsDialog
 from archive_goblin.ui.pages.settings_page import SettingsDialog
+from archive_goblin.ui.pages.upload_progress_page import UploadProgressDialog
+from archive_goblin.ui.pages.upload_preview_page import UploadPreviewDialog
+from archive_goblin.ui.workers.upload_worker import UploadWorker
 
 
 class MainWindow(QMainWindow):
@@ -40,22 +46,41 @@ class MainWindow(QMainWindow):
         self.naming_service = NamingService()
         self.validator = RenameValidator()
         self.renamer = RenameService()
+        self.archive_upload_service = ArchiveUploadService()
+        self.upload_preview_service = UploadPreviewService()
         self._warned_mount_points: set[str] = set()
+        self._upload_thread: QThread | None = None
+        self._upload_worker: UploadWorker | None = None
 
-        rules, protected_disk_image_extensions, show_smb_warning, page_url_pattern, default_tags = self.settings_store.load_settings()
+        (
+            rules,
+            protected_disk_image_extensions,
+            show_smb_warning,
+            title_pattern,
+            page_url_pattern,
+            default_tags,
+            archive_access_key,
+            archive_secret_key,
+        ) = self.settings_store.load_settings()
         self.session = Session(
             rules=rules,
             protected_disk_image_extensions=protected_disk_image_extensions,
             show_smb_warning=show_smb_warning,
+            title_pattern=title_pattern,
             page_url_pattern=page_url_pattern,
             default_tags=default_tags,
+            archive_access_key=archive_access_key,
+            archive_secret_key=archive_secret_key,
         )
         self.settings_store.save_settings(
             self.session.rules,
             self.session.protected_disk_image_extensions,
             self.session.show_smb_warning,
+            self.session.title_pattern,
             self.session.page_url_pattern,
             self.session.default_tags,
+            self.session.archive_access_key,
+            self.session.archive_secret_key,
         )
 
         self.files_page = FilesPage()
@@ -65,17 +90,26 @@ class MainWindow(QMainWindow):
             self,
         )
         self.metadata_settings_dialog = MetadataSettingsDialog(
+            self.session.title_pattern,
             self.session.page_url_pattern,
             self.session.default_tags,
             self,
         )
+        self.archive_settings_dialog = ArchiveSettingsDialog(
+            self.session.archive_access_key,
+            self.session.archive_secret_key,
+            self,
+        )
         self.metadata_dialog = MetadataDialog(
             self.session.metadata,
+            self.session.title_pattern,
             self.session.page_url_pattern,
             self.session.default_tags,
             self.session.files,
             self,
         )
+        self.upload_preview_dialog = UploadPreviewDialog(self)
+        self.upload_progress_dialog = UploadProgressDialog(self)
         self.setCentralWidget(self.files_page)
         self._build_menu()
 
@@ -85,7 +119,10 @@ class MainWindow(QMainWindow):
         self.files_page.rescan_requested.connect(self.rescan_folder)
         self.settings_dialog.settings_changed.connect(self.on_settings_changed)
         self.metadata_settings_dialog.settings_changed.connect(self.on_metadata_settings_changed)
+        self.archive_settings_dialog.settings_changed.connect(self.on_archive_settings_changed)
         self.metadata_dialog.metadata_saved.connect(self.on_metadata_saved)
+        self.metadata_dialog.preview_requested.connect(self.on_metadata_preview_requested)
+        self.upload_preview_dialog.upload_requested.connect(self.start_upload)
 
         self.files_page.set_files(self.session.folder, self.session.files)
         self.statusBar().showMessage("Open a folder to begin reviewing files and metadata.")
@@ -117,6 +154,14 @@ class MainWindow(QMainWindow):
         self.addAction(apply_renames_action)
         file_menu.addAction(apply_renames_action)
 
+        file_menu.addSeparator()
+        quit_action = QAction("Quit", self)
+        quit_action.setShortcut(QKeySequence("Ctrl+Shift+Q"))
+        quit_action.setShortcutContext(Qt.ApplicationShortcut)
+        quit_action.triggered.connect(self.close)
+        self.addAction(quit_action)
+        file_menu.addAction(quit_action)
+
         edit_metadata_action = QAction("Metadata...", self)
         edit_metadata_action.setShortcut(QKeySequence("Ctrl+P"))
         edit_metadata_action.setShortcutContext(Qt.ApplicationShortcut)
@@ -124,19 +169,30 @@ class MainWindow(QMainWindow):
         self.addAction(edit_metadata_action)
         project_menu.addAction(edit_metadata_action)
 
+        upload_preview_action = QAction("Upload Preview...", self)
+        upload_preview_action.triggered.connect(self.open_upload_preview_dialog)
+        project_menu.addAction(upload_preview_action)
+
         edit_rules_action = QAction("Rules...", self)
-        edit_rules_action.setShortcut(QKeySequence("Ctrl+S, R"))
+        edit_rules_action.setShortcut(QKeySequence("Ctrl+Alt+R"))
         edit_rules_action.setShortcutContext(Qt.ApplicationShortcut)
         edit_rules_action.triggered.connect(self.open_rules_dialog)
         self.addAction(edit_rules_action)
         settings_menu.addAction(edit_rules_action)
 
         edit_metadata_settings_action = QAction("Metadata...", self)
-        edit_metadata_settings_action.setShortcut(QKeySequence("Ctrl+S, M"))
+        edit_metadata_settings_action.setShortcut(QKeySequence("Ctrl+Alt+M"))
         edit_metadata_settings_action.setShortcutContext(Qt.ApplicationShortcut)
         edit_metadata_settings_action.triggered.connect(self.open_metadata_settings_dialog)
         self.addAction(edit_metadata_settings_action)
         settings_menu.addAction(edit_metadata_settings_action)
+
+        edit_archive_settings_action = QAction("Archive.org...", self)
+        edit_archive_settings_action.setShortcut(QKeySequence("Ctrl+Alt+A"))
+        edit_archive_settings_action.setShortcutContext(Qt.ApplicationShortcut)
+        edit_archive_settings_action.triggered.connect(self.open_archive_settings_dialog)
+        self.addAction(edit_archive_settings_action)
+        settings_menu.addAction(edit_archive_settings_action)
 
     def open_rules_dialog(self) -> None:
         self.settings_dialog.set_settings(
@@ -149,6 +205,7 @@ class MainWindow(QMainWindow):
 
     def open_metadata_settings_dialog(self) -> None:
         self.metadata_settings_dialog.set_settings(
+            self.session.title_pattern,
             self.session.page_url_pattern,
             self.session.default_tags,
         )
@@ -156,9 +213,23 @@ class MainWindow(QMainWindow):
         self.metadata_settings_dialog.raise_()
         self.metadata_settings_dialog.activateWindow()
 
+    def open_archive_settings_dialog(self) -> None:
+        self.archive_settings_dialog.set_settings(
+            self.session.archive_access_key,
+            self.session.archive_secret_key,
+        )
+        self.archive_settings_dialog.show()
+        self.archive_settings_dialog.raise_()
+        self.archive_settings_dialog.activateWindow()
+
     def open_metadata_dialog(self) -> None:
         self.metadata_dialog.set_metadata(self.session.metadata)
-        self.metadata_dialog.set_context(self.session.page_url_pattern, self.session.default_tags, self.session.files)
+        self.metadata_dialog.set_context(
+            self.session.title_pattern,
+            self.session.page_url_pattern,
+            self.session.default_tags,
+            self.session.files,
+        )
         if self.session.folder is None:
             QMessageBox.information(
                 self,
@@ -189,8 +260,11 @@ class MainWindow(QMainWindow):
             self.session.rules,
             self.session.protected_disk_image_extensions,
             self.session.show_smb_warning,
+            self.session.title_pattern,
             self.session.page_url_pattern,
             self.session.default_tags,
+            self.session.archive_access_key,
+            self.session.archive_secret_key,
         )
         self.settings_dialog.set_settings(
             self.session.rules,
@@ -199,27 +273,61 @@ class MainWindow(QMainWindow):
         if self.session.folder is not None:
             self._reload_files()
 
-    def on_metadata_settings_changed(self, page_url_pattern: str, default_tags: list[str]) -> None:
+    def on_metadata_settings_changed(self, title_pattern: str, page_url_pattern: str, default_tags: list[str]) -> None:
+        self.session.title_pattern = title_pattern
         self.session.page_url_pattern = page_url_pattern
         self.session.default_tags = list(default_tags)
         self.settings_store.save_settings(
             self.session.rules,
             self.session.protected_disk_image_extensions,
             self.session.show_smb_warning,
+            self.session.title_pattern,
             self.session.page_url_pattern,
             self.session.default_tags,
+            self.session.archive_access_key,
+            self.session.archive_secret_key,
         )
         self.metadata_settings_dialog.set_settings(
+            self.session.title_pattern,
             self.session.page_url_pattern,
             self.session.default_tags,
         )
-        self.metadata_dialog.set_context(self.session.page_url_pattern, self.session.default_tags, self.session.files)
+        self.metadata_dialog.set_context(
+            self.session.title_pattern,
+            self.session.page_url_pattern,
+            self.session.default_tags,
+            self.session.files,
+        )
+
+    def on_archive_settings_changed(self, access_key: str, secret_key: str) -> None:
+        self.session.archive_access_key = access_key
+        self.session.archive_secret_key = secret_key
+        self.settings_store.save_settings(
+            self.session.rules,
+            self.session.protected_disk_image_extensions,
+            self.session.show_smb_warning,
+            self.session.title_pattern,
+            self.session.page_url_pattern,
+            self.session.default_tags,
+            self.session.archive_access_key,
+            self.session.archive_secret_key,
+        )
+        self.archive_settings_dialog.set_settings(
+            self.session.archive_access_key,
+            self.session.archive_secret_key,
+        )
 
     def on_metadata_saved(self, metadata: ProjectMetadata) -> None:
         self.session.metadata = metadata
         self.project_store.save_metadata(self.session.folder, self.session.metadata)
         self.metadata_dialog.set_metadata(self.session.metadata)
         self._refresh_status_bar("Project metadata saved.")
+
+    def on_metadata_preview_requested(self, metadata: ProjectMetadata) -> None:
+        self.session.metadata = metadata
+        self.project_store.save_metadata(self.session.folder, self.session.metadata)
+        self.metadata_dialog.set_metadata(self.session.metadata)
+        self.open_upload_preview_dialog()
 
     def on_file_edited(self, row: int, changes: dict[str, object]) -> None:
         if row < 0 or row >= len(self.session.files):
@@ -296,7 +404,12 @@ class MainWindow(QMainWindow):
 
         self.validator.validate(self.session.folder, self.session.files)
         self.files_page.set_files(self.session.folder, self.session.files)
-        self.metadata_dialog.set_context(self.session.page_url_pattern, self.session.default_tags, self.session.files)
+        self.metadata_dialog.set_context(
+            self.session.title_pattern,
+            self.session.page_url_pattern,
+            self.session.default_tags,
+            self.session.files,
+        )
         self._refresh_status_bar()
 
     def _confirm_apply(self, ready_files: list[FileItem]) -> QMessageBox.StandardButton:
@@ -370,8 +483,11 @@ class MainWindow(QMainWindow):
                 self.session.rules,
                 self.session.protected_disk_image_extensions,
                 self.session.show_smb_warning,
+                self.session.title_pattern,
                 self.session.page_url_pattern,
                 self.session.default_tags,
+                self.session.archive_access_key,
+                self.session.archive_secret_key,
             )
 
     def _refresh_status_bar(self, message: str | None = None) -> None:
@@ -382,3 +498,113 @@ class MainWindow(QMainWindow):
         metadata_summary = self.session.metadata.readiness_summary
         folder_summary = self.session.folder.name if self.session.folder is not None else "No folder"
         self.statusBar().showMessage(f"{folder_summary} | Metadata: {metadata_summary}")
+
+    def open_upload_preview_dialog(self) -> None:
+        summary = self.upload_preview_service.build_summary(
+            self.session.folder,
+            self.session.files,
+            self.session.metadata,
+            self.session.title_pattern,
+            self.session.page_url_pattern,
+            self.session.default_tags,
+            self.session.archive_access_key,
+            self.session.archive_secret_key,
+        )
+        self.upload_preview_dialog.set_summary(summary)
+        self.upload_preview_dialog.show()
+        self.upload_preview_dialog.raise_()
+        self.upload_preview_dialog.activateWindow()
+
+    def start_upload(self) -> None:
+        summary = self.upload_preview_service.build_summary(
+            self.session.folder,
+            self.session.files,
+            self.session.metadata,
+            self.session.title_pattern,
+            self.session.page_url_pattern,
+            self.session.default_tags,
+            self.session.archive_access_key,
+            self.session.archive_secret_key,
+        )
+        if summary.blocked_issues:
+            QMessageBox.warning(
+                self,
+                "Upload Blocked",
+                "\n".join(summary.blocked_issues),
+            )
+            self.upload_preview_dialog.set_summary(summary)
+            return
+
+        if QMessageBox.question(
+            self,
+            "Confirm Upload",
+            f"Upload {summary.file_count} file(s) to Archive.org as '{summary.identifier}'?",
+            QMessageBox.Yes | QMessageBox.Cancel,
+            QMessageBox.Yes,
+        ) != QMessageBox.Yes:
+            return
+
+        prepared = self.archive_upload_service.prepare_upload(
+            self.session.folder,
+            self.session.files,
+            self.session.metadata,
+            self.session.title_pattern,
+            self.session.page_url_pattern,
+            self.session.default_tags,
+            self.session.archive_access_key,
+            self.session.archive_secret_key,
+        )
+        if not hasattr(prepared, "identifier"):
+            QMessageBox.critical(self, "Upload Failed", prepared.message)
+            self.open_upload_preview_dialog()
+            return
+
+        self._upload_thread = QThread(self)
+        self._upload_worker = UploadWorker(self.archive_upload_service, prepared)
+        self._upload_worker.moveToThread(self._upload_thread)
+        self._upload_thread.started.connect(self._upload_worker.run)
+        self._upload_worker.started.connect(self.upload_progress_dialog.start)
+        self._upload_worker.file_started.connect(self.upload_progress_dialog.mark_file_started)
+        self._upload_worker.file_finished.connect(self.upload_progress_dialog.mark_file_finished)
+        self._upload_worker.finished.connect(self._on_upload_finished)
+        self._upload_worker.finished.connect(self._upload_thread.quit)
+        self._upload_thread.finished.connect(self._cleanup_upload_thread)
+        self._upload_thread.start()
+        self.upload_progress_dialog.show()
+        self.upload_progress_dialog.raise_()
+        self.upload_progress_dialog.activateWindow()
+
+    def _on_upload_finished(self, result: object, page_url: str) -> None:
+        if not hasattr(result, "success"):
+            return
+        if result.success:
+            self.upload_progress_dialog.finish_success(result.message)
+            self._show_rich_message(
+                "Upload Complete",
+                f"{result.message}<br><br><a href=\"{page_url}\">{page_url}</a>" if page_url else result.message,
+                QMessageBox.Information,
+            )
+        else:
+            self.upload_progress_dialog.finish_failure(result.message)
+            self._show_rich_message(
+                "Upload Failed",
+                result.message.replace("\n", "<br>"),
+                QMessageBox.Critical,
+            )
+
+    def _cleanup_upload_thread(self) -> None:
+        if self._upload_worker is not None:
+            self._upload_worker.deleteLater()
+            self._upload_worker = None
+        if self._upload_thread is not None:
+            self._upload_thread.deleteLater()
+            self._upload_thread = None
+
+    def _show_rich_message(self, title: str, html_text: str, icon: QMessageBox.Icon) -> None:
+        message_box = QMessageBox(self)
+        message_box.setWindowTitle(title)
+        message_box.setIcon(icon)
+        message_box.setTextFormat(Qt.RichText)
+        message_box.setTextInteractionFlags(Qt.TextBrowserInteraction)
+        message_box.setText(html_text)
+        message_box.exec()

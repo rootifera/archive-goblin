@@ -15,15 +15,23 @@ from archive_goblin.services.archive_metadata import ArchiveMetadataService
 
 
 class MetadataSettingsPage(QWidget):
-    settings_changed = Signal(str, list)
+    settings_changed = Signal(str, str, list)
 
-    def __init__(self, page_url_pattern: str, default_tags: list[str]) -> None:
+    def __init__(self, title_pattern: str, page_url_pattern: str, default_tags: list[str]) -> None:
         super().__init__()
+        self._title_pattern = title_pattern
         self._page_url_pattern = page_url_pattern
         self._default_tags = list(default_tags)
 
         layout = QVBoxLayout(self)
         form_layout = QFormLayout()
+        self.title_pattern_edit = QLineEdit()
+        self.title_pattern_edit.setPlaceholderText("{title} ({release_year}) ({platform})")
+        self.title_pattern_help = QLabel(
+            "Controls the Archive.org-facing title. Available placeholders: {title}, {date}, {release_year}, {language}, {publisher}, {developer}, {platform}, {collection}"
+        )
+        self.title_pattern_help.setWordWrap(True)
+        self.title_pattern_help.setStyleSheet("color:#7c8796;")
         self.page_url_pattern_edit = QLineEdit()
         self.page_url_pattern_edit.setPlaceholderText("{title}-{release_year}-{language}")
         self.page_url_pattern_help = QLabel(
@@ -38,20 +46,27 @@ class MetadataSettingsPage(QWidget):
         )
         self.default_tags_help.setWordWrap(True)
         self.default_tags_help.setStyleSheet("color:#7c8796;")
+        form_layout.addRow("Title Pattern", self.title_pattern_edit)
+        form_layout.addRow("", self.title_pattern_help)
         form_layout.addRow("Page URL Pattern", self.page_url_pattern_edit)
         form_layout.addRow("", self.page_url_pattern_help)
         form_layout.addRow("Default Tags", self.default_tags_edit)
         form_layout.addRow("", self.default_tags_help)
         layout.addLayout(form_layout)
 
+        self.title_pattern_edit.editingFinished.connect(self._emit_settings_changed)
         self.page_url_pattern_edit.editingFinished.connect(self._emit_settings_changed)
         self.default_tags_edit.editingFinished.connect(self._emit_settings_changed)
 
-        self.set_settings(self._page_url_pattern, self._default_tags)
+        self.set_settings(self._title_pattern, self._page_url_pattern, self._default_tags)
 
-    def set_settings(self, page_url_pattern: str, default_tags: list[str]) -> None:
+    def set_settings(self, title_pattern: str, page_url_pattern: str, default_tags: list[str]) -> None:
+        self._title_pattern = title_pattern
         self._page_url_pattern = page_url_pattern
         self._default_tags = list(default_tags)
+        self.title_pattern_edit.blockSignals(True)
+        self.title_pattern_edit.setText(self._title_pattern)
+        self.title_pattern_edit.blockSignals(False)
         self.page_url_pattern_edit.blockSignals(True)
         self.page_url_pattern_edit.setText(self._page_url_pattern)
         self.page_url_pattern_edit.blockSignals(False)
@@ -60,13 +75,16 @@ class MetadataSettingsPage(QWidget):
         self.default_tags_edit.blockSignals(False)
 
     def _emit_settings_changed(self, *_args: object) -> None:
+        title_pattern = self.title_pattern_edit.text().strip() or ArchiveMetadataService.default_title_pattern
         pattern = self.page_url_pattern_edit.text().strip() or ArchiveMetadataService.default_page_url_pattern
         default_tags = self._normalize_tags(self.default_tags_edit.text())
+        self._title_pattern = title_pattern
         self._page_url_pattern = pattern
         self._default_tags = default_tags
+        self.title_pattern_edit.setText(self._title_pattern)
         self.page_url_pattern_edit.setText(self._page_url_pattern)
         self.default_tags_edit.setText(", ".join(self._default_tags))
-        self.settings_changed.emit(self._page_url_pattern, list(self._default_tags))
+        self.settings_changed.emit(self._title_pattern, self._page_url_pattern, list(self._default_tags))
 
     def _normalize_tags(self, raw_text: str) -> list[str]:
         normalized: list[str] = []
@@ -84,20 +102,21 @@ class MetadataSettingsPage(QWidget):
 
 
 class MetadataSettingsDialog(QDialog):
-    settings_changed = Signal(str, list)
+    settings_changed = Signal(str, str, list)
 
     def __init__(
         self,
+        title_pattern: str,
         page_url_pattern: str,
         default_tags: list[str],
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Metadata Settings")
-        self.resize(760, 260)
+        self.resize(760, 360)
 
         layout = QVBoxLayout(self)
-        self.settings_page = MetadataSettingsPage(page_url_pattern, default_tags)
+        self.settings_page = MetadataSettingsPage(title_pattern, page_url_pattern, default_tags)
         layout.addWidget(self.settings_page)
 
         close_buttons = QDialogButtonBox(QDialogButtonBox.Close)
@@ -108,5 +127,5 @@ class MetadataSettingsDialog(QDialog):
 
         self.settings_page.settings_changed.connect(self.settings_changed.emit)
 
-    def set_settings(self, page_url_pattern: str, default_tags: list[str]) -> None:
-        self.settings_page.set_settings(page_url_pattern, default_tags)
+    def set_settings(self, title_pattern: str, page_url_pattern: str, default_tags: list[str]) -> None:
+        self.settings_page.set_settings(title_pattern, page_url_pattern, default_tags)

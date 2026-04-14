@@ -91,7 +91,8 @@ class ArchiveMetadataServiceTests(unittest.TestCase):
         description = self.service.generate_description(metadata, files)
 
         self.assertIn("Warcraft (1994)", description)
-        self.assertIn("[Blizzard - Blizzard]", description)
+        self.assertIn("Developer: Blizzard", description)
+        self.assertIn("Publisher: Blizzard", description)
         self.assertIn("1 x Disk images", description)
         self.assertIn("1 x Disk scans", description)
         self.assertIn("1 x Cover Images", description)
@@ -100,7 +101,8 @@ class ArchiveMetadataServiceTests(unittest.TestCase):
         self.assertIn("1 x Other files", description)
         self.assertIn("Notes:", description)
         self.assertIn("Includes big box scans.", description)
-        self.assertTrue(description.endswith("Prepared with Archive Goblin"))
+        self.assertIn("Prepared with Archive Goblin:", description)
+        self.assertIn("https://github.com/rootifera/archive-goblin", description)
 
     def test_disk_image_sidecar_files_are_counted_as_one_disk(self) -> None:
         metadata = ProjectMetadata(title="Game")
@@ -118,6 +120,17 @@ class ArchiveMetadataServiceTests(unittest.TestCase):
         description = self.service.generate_description(metadata, files)
 
         self.assertIn("2 x Disk images", description)
+
+    def test_format_display_title_includes_platform_when_present(self) -> None:
+        title = self.service.format_display_title(
+            ProjectMetadata(
+                title="Beneath a Steel Sky",
+                date="1994",
+                platform="PC",
+            )
+        )
+
+        self.assertEqual(title, "Beneath a Steel Sky (1994) (PC)")
 
     def test_page_url_override_wins_over_pattern(self) -> None:
         metadata = ProjectMetadata(
