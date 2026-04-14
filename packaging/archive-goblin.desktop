@@ -1,0 +1,10 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Archive Goblin
+Comment=Prepare and upload items to Archive.org
+Exec=archive-goblin
+Icon=archive-goblin
+Terminal=false
+Categories=Utility;
+StartupNotify=true

@@ -48,6 +48,30 @@ From the repo root:
 python -m archive_goblin
 ```
 
+## Packaging
+
+Build-only tooling:
+
+```bash
+pip install -r requirements-build.txt
+```
+
+Build a standalone Linux app bundle with PyInstaller:
+
+```bash
+./scripts/build-linux-app.sh
+```
+
+Build a Debian package:
+
+```bash
+./scripts/build-deb.sh
+```
+
+Build artifacts are written to:
+- `dist/` for the PyInstaller app bundle
+- `release/` for the `.deb` package
+
 ## Main Workflow
 
 1. Open a folder.
@@ -93,6 +117,5 @@ Files page:
 
 - Archive Goblin ignores `.archive-goblin-project.json` during rename review and upload.
 - SMB / CIFS shares can behave unpredictably for rename visibility on Linux. Local folders are more reliable.
-- Upload currently targets new items and blocks identifiers that already exist.
-- Automatic retry for partial upload failures is not implemented yet, because partial Archive.org uploads need careful recovery.
+- Partial Archive.org uploads can now be resumed by comparing local files with the existing remote item.
 - The current application icon was picked randomly from `icon-icons.com`.
