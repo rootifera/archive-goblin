@@ -95,3 +95,4 @@ Files page:
 - SMB / CIFS shares can behave unpredictably for rename visibility on Linux. Local folders are more reliable.
 - Upload currently targets new items and blocks identifiers that already exist.
 - Automatic retry for partial upload failures is not implemented yet, because partial Archive.org uploads need careful recovery.
+- The current application icon was picked randomly from `icon-icons.com`.

@@ -23,6 +23,16 @@ class ArchiveUploadPlan:
     metadata_payload: dict[str, object]
     access_key: str
     secret_key: str
+    is_resume: bool = False
+    existing_remote_names: list[str] | None = None
+
+
+@dataclass(slots=True)
+class ArchiveRecoveryDetails:
+    identifier: str
+    page_url: str
+    remote_file_names: list[str]
+    missing_file_paths: list[Path]
 
 
 class ArchiveUploadService:
@@ -48,10 +58,6 @@ class ArchiveUploadService:
             return ArchiveUploadResult(False, "Archive.org identifier could not be generated.")
         page_url = self.archive_metadata_service.build_page_url(page_url_pattern, metadata)
 
-        availability = self.archive_metadata_service.check_identifier_availability(identifier)
-        if not availability.available:
-            return ArchiveUploadResult(False, availability.message)
-
         file_paths = [
             file_item.path
             for file_item in files
@@ -61,13 +67,35 @@ class ArchiveUploadService:
             return ArchiveUploadResult(False, "There are no files available for upload.")
 
         metadata_payload = self._build_metadata_payload(metadata, title_pattern, default_tags)
+        availability = self.archive_metadata_service.check_identifier_availability(identifier)
+        if availability.available:
+            return ArchiveUploadPlan(
+                identifier=identifier,
+                page_url=page_url,
+                file_paths=file_paths,
+                metadata_payload=metadata_payload,
+                access_key=access_key.strip(),
+                secret_key=secret_key.strip(),
+            )
+
+        recovery = self.inspect_existing_upload(identifier, page_url, file_paths)
+        if recovery is None:
+            return ArchiveUploadResult(False, availability.message)
+        if not recovery.missing_file_paths:
+            return ArchiveUploadResult(
+                False,
+                "This Archive.org item already exists and all uploadable files are already present.",
+            )
+
         return ArchiveUploadPlan(
             identifier=identifier,
             page_url=page_url,
-            file_paths=file_paths,
+            file_paths=recovery.missing_file_paths,
             metadata_payload=metadata_payload,
             access_key=access_key.strip(),
             secret_key=secret_key.strip(),
+            is_resume=True,
+            existing_remote_names=recovery.remote_file_names,
         )
 
     def upload_plan(self, plan: ArchiveUploadPlan, started_callback=None, finished_callback=None) -> ArchiveUploadResult:
@@ -113,7 +141,33 @@ class ArchiveUploadService:
             if finished_callback is not None:
                 finished_callback(index, file_name, completed)
 
+        if plan.is_resume:
+            return ArchiveUploadResult(True, f"Resumed upload and sent {len(plan.file_paths)} missing file(s) to Archive.org.")
         return ArchiveUploadResult(True, f"Uploaded {len(plan.file_paths)} file(s) to Archive.org.")
+
+    def inspect_existing_upload(
+        self,
+        identifier: str,
+        page_url: str,
+        local_file_paths: list[Path],
+    ) -> ArchiveRecoveryDetails | None:
+        try:
+            remote_file_names = self.archive_metadata_service.fetch_item_file_names(identifier)
+        except Exception:
+            return None
+
+        remote_name_set = {name.casefold() for name in remote_file_names}
+        missing_file_paths = [
+            path
+            for path in local_file_paths
+            if path.name.casefold() not in remote_name_set
+        ]
+        return ArchiveRecoveryDetails(
+            identifier=identifier,
+            page_url=page_url,
+            remote_file_names=remote_file_names,
+            missing_file_paths=missing_file_paths,
+        )
 
     def _build_metadata_payload(self, metadata: ProjectMetadata, title_pattern: str, default_tags: list[str]) -> dict[str, object]:
         effective_tags = self.archive_metadata_service.effective_tags(metadata, default_tags)

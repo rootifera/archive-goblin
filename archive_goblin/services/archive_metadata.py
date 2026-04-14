@@ -129,12 +129,9 @@ class ArchiveMetadataService:
         if not normalized_identifier:
             return IdentifierAvailability(False, "Enter enough metadata to generate a page URL first.")
 
-        url = f"https://archive.org/metadata/{quote(normalized_identifier)}"
-        request = Request(url, method="GET", headers={"User-Agent": "Archive Goblin"})
         try:
-            with urlopen(request, timeout=6) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-                return self._availability_from_payload(payload)
+            payload = self.fetch_metadata_payload(normalized_identifier)
+            return self._availability_from_payload(payload)
         except HTTPError as exc:
             return IdentifierAvailability(False, f"Archive.org returned HTTP {exc.code}.")
         except URLError as exc:
@@ -143,6 +140,30 @@ class ArchiveMetadataService:
             return IdentifierAvailability(False, "Archive.org returned an unexpected response.")
 
         return IdentifierAvailability(False, "This Archive.org identifier could not be confirmed as available.")
+
+    def fetch_metadata_payload(self, identifier: str) -> object:
+        normalized_identifier = identifier.strip()
+        url = f"https://archive.org/metadata/{quote(normalized_identifier)}"
+        request = Request(url, method="GET", headers={"User-Agent": "Archive Goblin"})
+        with urlopen(request, timeout=6) as response:
+            return json.loads(response.read().decode("utf-8"))
+
+    def fetch_item_file_names(self, identifier: str) -> list[str]:
+        payload = self.fetch_metadata_payload(identifier)
+        if not isinstance(payload, dict):
+            return []
+        files = payload.get("files")
+        if not isinstance(files, list):
+            return []
+
+        names: list[str] = []
+        for entry in files:
+            if not isinstance(entry, dict):
+                continue
+            name = str(entry.get("name", "")).strip()
+            if name:
+                names.append(name)
+        return names
 
     def language_name_for_code(self, code: str) -> str:
         normalized_code = code.strip()

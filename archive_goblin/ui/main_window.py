@@ -535,15 +535,6 @@ class MainWindow(QMainWindow):
             self.upload_preview_dialog.set_summary(summary)
             return
 
-        if QMessageBox.question(
-            self,
-            "Confirm Upload",
-            f"Upload {summary.file_count} file(s) to Archive.org as '{summary.identifier}'?",
-            QMessageBox.Yes | QMessageBox.Cancel,
-            QMessageBox.Yes,
-        ) != QMessageBox.Yes:
-            return
-
         prepared = self.archive_upload_service.prepare_upload(
             self.session.folder,
             self.session.files,
@@ -559,8 +550,45 @@ class MainWindow(QMainWindow):
             self.open_upload_preview_dialog()
             return
 
+        if not self._confirm_upload_plan(prepared, summary.file_count):
+            return
+
+        self._run_upload_plan(prepared)
+
+    def _confirm_upload_plan(self, plan: object, original_file_count: int) -> bool:
+        if not hasattr(plan, "identifier"):
+            return False
+
+        if getattr(plan, "is_resume", False):
+            existing_count = len(getattr(plan, "existing_remote_names", []) or [])
+            return (
+                QMessageBox.question(
+                    self,
+                    "Resume Upload",
+                    f"This Archive.org item already exists.\n\n"
+                    f"Resume upload for {len(plan.file_paths)} missing file(s)?\n"
+                    f"Remote files already present: {existing_count}\n\n"
+                    f"Identifier: {plan.identifier}",
+                    QMessageBox.Yes | QMessageBox.Cancel,
+                    QMessageBox.Yes,
+                )
+                == QMessageBox.Yes
+            )
+
+        return (
+            QMessageBox.question(
+                self,
+                "Confirm Upload",
+                f"Upload {original_file_count} file(s) to Archive.org as '{plan.identifier}'?",
+                QMessageBox.Yes | QMessageBox.Cancel,
+                QMessageBox.Yes,
+            )
+            == QMessageBox.Yes
+        )
+
+    def _run_upload_plan(self, plan: object) -> None:
         self._upload_thread = QThread(self)
-        self._upload_worker = UploadWorker(self.archive_upload_service, prepared)
+        self._upload_worker = UploadWorker(self.archive_upload_service, plan)
         self._upload_worker.moveToThread(self._upload_thread)
         self._upload_thread.started.connect(self._upload_worker.run)
         self._upload_worker.started.connect(self.upload_progress_dialog.start)
@@ -592,6 +620,31 @@ class MainWindow(QMainWindow):
                 result.message.replace("\n", "<br>"),
                 QMessageBox.Critical,
             )
+            self._offer_resume_after_failed_upload()
+
+    def _offer_resume_after_failed_upload(self) -> None:
+        prepared = self.archive_upload_service.prepare_upload(
+            self.session.folder,
+            self.session.files,
+            self.session.metadata,
+            self.session.title_pattern,
+            self.session.page_url_pattern,
+            self.session.default_tags,
+            self.session.archive_access_key,
+            self.session.archive_secret_key,
+        )
+        if not hasattr(prepared, "identifier") or not getattr(prepared, "is_resume", False):
+            return
+
+        if QMessageBox.question(
+            self,
+            "Resume Missing Files",
+            f"Archive Goblin found {len(prepared.file_paths)} missing file(s) on the current Archive.org item.\n\n"
+            "Do you want to resume the upload now?",
+            QMessageBox.Yes | QMessageBox.Cancel,
+            QMessageBox.Yes,
+        ) == QMessageBox.Yes:
+            self._run_upload_plan(prepared)
 
     def _cleanup_upload_thread(self) -> None:
         if self._upload_worker is not None:

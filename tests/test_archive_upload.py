@@ -9,7 +9,7 @@ from unittest.mock import patch
 from archive_goblin.models.file_item import FileItem
 from archive_goblin.models.project_metadata import ProjectMetadata
 from archive_goblin.models.rule import FileType
-from archive_goblin.services.archive_upload import ArchiveUploadService
+from archive_goblin.services.archive_upload import ArchiveRecoveryDetails, ArchiveUploadService
 
 
 class _FakeResponse:
@@ -83,6 +83,107 @@ class ArchiveUploadServiceTests(unittest.TestCase):
             )
 
             self.assertEqual(plan.identifier, "blade-runner")
+            self.assertFalse(plan.is_resume)
+
+    @patch("archive_goblin.services.archive_upload.ArchiveUploadService.inspect_existing_upload")
+    @patch("archive_goblin.services.archive_upload.ArchiveMetadataService.check_identifier_availability")
+    def test_prepare_upload_returns_resume_plan_for_partial_existing_item(
+        self,
+        mock_availability,
+        mock_inspect,
+    ) -> None:
+        mock_availability.return_value.available = False
+        mock_availability.return_value.message = "This Archive.org identifier already exists."
+
+        with TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            existing_path = folder / "100-front-01.jpg"
+            missing_path = folder / "200-disk-01.jpg"
+            existing_path.write_text("a", encoding="utf-8")
+            missing_path.write_text("b", encoding="utf-8")
+            files = [
+                FileItem(
+                    path=existing_path,
+                    detected_type=FileType.COVER_FRONT,
+                    type=FileType.COVER_FRONT,
+                    detected_index=1,
+                    index=1,
+                    proposed_name=existing_path.name,
+                ),
+                FileItem(
+                    path=missing_path,
+                    detected_type=FileType.MEDIA_SCAN,
+                    type=FileType.MEDIA_SCAN,
+                    detected_index=1,
+                    index=1,
+                    proposed_name=missing_path.name,
+                ),
+            ]
+
+            mock_inspect.return_value = ArchiveRecoveryDetails(
+                identifier="blade-runner",
+                page_url="https://archive.org/details/blade-runner",
+                remote_file_names=[existing_path.name],
+                missing_file_paths=[missing_path],
+            )
+            plan = self.service.prepare_upload(
+                folder,
+                files,
+                ProjectMetadata(title="Blade Runner", collection="software:open_source_software"),
+                "{title} ({release_year}) ({platform})",
+                "{title}",
+                [],
+                "access",
+                "secret",
+            )
+
+            self.assertTrue(plan.is_resume)
+            self.assertEqual(plan.file_paths, [missing_path])
+
+    @patch("archive_goblin.services.archive_upload.ArchiveUploadService.inspect_existing_upload")
+    @patch("archive_goblin.services.archive_upload.ArchiveMetadataService.check_identifier_availability")
+    def test_prepare_upload_blocks_when_existing_item_already_has_all_files(
+        self,
+        mock_availability,
+        mock_inspect,
+    ) -> None:
+        mock_availability.return_value.available = False
+        mock_availability.return_value.message = "This Archive.org identifier already exists."
+
+        with TemporaryDirectory() as tmp:
+            folder = Path(tmp)
+            path = folder / "100-front-01.jpg"
+            path.write_text("data", encoding="utf-8")
+            files = [
+                FileItem(
+                    path=path,
+                    detected_type=FileType.COVER_FRONT,
+                    type=FileType.COVER_FRONT,
+                    detected_index=1,
+                    index=1,
+                    proposed_name=path.name,
+                )
+            ]
+
+            mock_inspect.return_value = ArchiveRecoveryDetails(
+                identifier="blade-runner",
+                page_url="https://archive.org/details/blade-runner",
+                remote_file_names=[path.name],
+                missing_file_paths=[],
+            )
+            result = self.service.prepare_upload(
+                folder,
+                files,
+                ProjectMetadata(title="Blade Runner", collection="software:open_source_software"),
+                "{title} ({release_year}) ({platform})",
+                "{title}",
+                [],
+                "access",
+                "secret",
+            )
+
+            self.assertFalse(result.success)
+            self.assertIn("already present", result.message)
 
     @patch("archive_goblin.services.archive_upload.ArchiveMetadataService.check_identifier_availability")
     def test_uploads_new_item_when_identifier_is_available(self, mock_availability) -> None:
