@@ -8,6 +8,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication
 
 from archive_goblin.ui.main_window import MainWindow
+from archive_goblin.version import __version__
 
 
 def _build_app_icon() -> QIcon:
@@ -22,6 +23,7 @@ def _build_app_icon() -> QIcon:
 def main() -> int:
     app = QApplication(sys.argv)
     app.setApplicationName("Archive Goblin")
+    app.setApplicationVersion(__version__)
     app_icon = _build_app_icon()
     app.setWindowIcon(app_icon)
     window = MainWindow()

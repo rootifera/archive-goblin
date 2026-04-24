@@ -25,6 +25,7 @@ class UploadProgressDialog(QDialog):
         self.overall_progress_bar = QProgressBar()
         self.current_item_progress_label = QLabel("Current Item")
         self.current_file_label = QLabel("Current file: —")
+        self.current_speed_label = QLabel("Speed: —")
         self.current_item_progress_bar = QProgressBar()
         self.progress_list = QListWidget()
         self.help_label = QLabel(
@@ -38,6 +39,7 @@ class UploadProgressDialog(QDialog):
         layout.addWidget(self.overall_progress_bar)
         layout.addWidget(self.current_item_progress_label)
         layout.addWidget(self.current_file_label)
+        layout.addWidget(self.current_speed_label)
         layout.addWidget(self.current_item_progress_bar)
         layout.addWidget(self.progress_list, 1)
         layout.addWidget(self.help_label)
@@ -56,6 +58,7 @@ class UploadProgressDialog(QDialog):
     def start(self, file_names: list[str]) -> None:
         self.status_label.setText(f"Uploading {len(file_names)} file(s)...")
         self.current_file_label.setText("Current file: —")
+        self.current_speed_label.setText("Speed: —")
         self.overall_progress_bar.setMaximum(max(1, len(file_names)))
         self.overall_progress_bar.setValue(0)
         self.current_item_progress_bar.setRange(0, 1)
@@ -70,9 +73,26 @@ class UploadProgressDialog(QDialog):
     def mark_file_started(self, index: int, file_name: str) -> None:
         self.current_file_label.setText(f"Current file: {file_name}")
         self.current_item_progress_bar.setRange(0, 0)
+        self.current_speed_label.setText("Speed: calculating...")
         item = self.progress_list.item(index)
         if item is not None:
             self._set_item_state(item, "Uploading", file_name, "#d9b46b")
+
+    def mark_file_progress(
+        self,
+        index: int,
+        file_name: str,
+        bytes_sent: int,
+        total_bytes: int,
+        bytes_per_second: float,
+    ) -> None:
+        self.current_file_label.setText(
+            f"Current file: {file_name} ({self._format_bytes(bytes_sent)} / {self._format_bytes(total_bytes)})"
+        )
+        self.current_speed_label.setText(f"Speed: {self._format_speed(bytes_per_second)}")
+        self.current_item_progress_bar.setRange(0, 1000)
+        progress_value = int((min(bytes_sent, total_bytes) / max(1, total_bytes)) * 1000)
+        self.current_item_progress_bar.setValue(progress_value)
 
     def mark_file_finished(self, index: int, file_name: str, completed: int) -> None:
         self.overall_progress_bar.setValue(completed)
@@ -82,16 +102,33 @@ class UploadProgressDialog(QDialog):
         if item is not None:
             self._set_item_state(item, "Done", file_name, "#6fb27f")
         self.current_file_label.setText("Current file: waiting for next file")
+        self.current_speed_label.setText("Speed: —")
 
     def finish_success(self, message: str) -> None:
         self.status_label.setText(message)
         self.current_file_label.setText("Current file: Complete")
+        self.current_speed_label.setText("Speed: —")
         self.current_item_progress_bar.setRange(0, 1)
         self.current_item_progress_bar.setValue(1)
         self.buttons.button(QDialogButtonBox.Close).setEnabled(True)
 
     def finish_failure(self, message: str) -> None:
         self.status_label.setText(message)
+        self.current_speed_label.setText("Speed: —")
         self.current_item_progress_bar.setRange(0, 1)
         self.current_item_progress_bar.setValue(0)
         self.buttons.button(QDialogButtonBox.Close).setEnabled(True)
+
+    def _format_speed(self, bytes_per_second: float) -> str:
+        return f"{self._format_bytes(int(bytes_per_second))}/s"
+
+    def _format_bytes(self, size: int) -> str:
+        value = float(size)
+        units = ["B", "KB", "MB", "GB", "TB"]
+        for unit in units:
+            if value < 1024 or unit == units[-1]:
+                if unit == "B":
+                    return f"{int(value)} {unit}"
+                return f"{value:.1f} {unit}"
+            value /= 1024
+        return f"{int(size)} B"

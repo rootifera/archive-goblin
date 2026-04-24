@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from time import perf_counter
+from typing import BinaryIO, Callable
 
 from archive_goblin.models.file_item import FileItem
 from archive_goblin.models.project_metadata import ProjectMetadata
@@ -33,6 +35,59 @@ class ArchiveRecoveryDetails:
     page_url: str
     remote_file_names: list[str]
     missing_file_paths: list[Path]
+
+
+UploadProgressCallback = Callable[[int, str, int, int, float], None]
+
+
+class UploadProgressFile:
+    def __init__(
+        self,
+        path: Path,
+        file_index: int,
+        progress_callback: UploadProgressCallback | None = None,
+    ) -> None:
+        self.path = path
+        self.name = path.name
+        self.file_index = file_index
+        self.progress_callback = progress_callback
+        self.total_bytes = path.stat().st_size
+        self.bytes_sent = 0
+        self._started_at = perf_counter()
+        self._handle: BinaryIO = path.open("rb")
+
+    def read(self, size: int = -1) -> bytes:
+        chunk = self._handle.read(size)
+        if chunk:
+            self.bytes_sent += len(chunk)
+            self._emit_progress()
+        return chunk
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        position = self._handle.seek(offset, whence)
+        if whence == 0 and offset == 0:
+            self.bytes_sent = 0
+            self._started_at = perf_counter()
+        return position
+
+    def tell(self) -> int:
+        return self._handle.tell()
+
+    def close(self) -> None:
+        self._handle.close()
+
+    def _emit_progress(self) -> None:
+        if self.progress_callback is None:
+            return
+        elapsed_seconds = max(0.001, perf_counter() - self._started_at)
+        bytes_per_second = self.bytes_sent / elapsed_seconds
+        self.progress_callback(
+            self.file_index,
+            self.name,
+            self.bytes_sent,
+            self.total_bytes,
+            bytes_per_second,
+        )
 
 
 class ArchiveUploadService:
@@ -98,7 +153,13 @@ class ArchiveUploadService:
             existing_remote_names=recovery.remote_file_names,
         )
 
-    def upload_plan(self, plan: ArchiveUploadPlan, started_callback=None, finished_callback=None) -> ArchiveUploadResult:
+    def upload_plan(
+        self,
+        plan: ArchiveUploadPlan,
+        started_callback=None,
+        finished_callback=None,
+        progress_callback: UploadProgressCallback | None = None,
+    ) -> ArchiveUploadResult:
         try:
             from internetarchive import upload
         except ImportError:
@@ -110,10 +171,12 @@ class ArchiveUploadService:
             metadata_payload = plan.metadata_payload if index == 0 else None
             if started_callback is not None:
                 started_callback(index, file_name)
+            progress_file: UploadProgressFile | None = None
             try:
+                progress_file = UploadProgressFile(file_path, index, progress_callback)
                 responses = upload(
                     plan.identifier,
-                    files=[str(file_path)],
+                    files=[progress_file],
                     metadata=metadata_payload,
                     access_key=plan.access_key,
                     secret_key=plan.secret_key,
@@ -125,6 +188,9 @@ class ArchiveUploadService:
                     f"Upload failed while sending {file_name}: {exc}\n\n"
                     "Some files may already be uploaded. Automatic retry is disabled for now.",
                 )
+            finally:
+                if progress_file is not None:
+                    progress_file.close()
 
             response_list = list(responses) if responses is not None else []
             failures = [response for response in response_list if not getattr(response, "ok", True)]

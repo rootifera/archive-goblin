@@ -29,6 +29,7 @@ from archive_goblin.ui.pages.settings_page import SettingsDialog
 from archive_goblin.ui.pages.upload_progress_page import UploadProgressDialog
 from archive_goblin.ui.pages.upload_preview_page import UploadPreviewDialog
 from archive_goblin.ui.workers.upload_worker import UploadWorker
+from archive_goblin.version import __version__
 
 
 class MainWindow(QMainWindow):
@@ -132,6 +133,7 @@ class MainWindow(QMainWindow):
         file_menu = menu_bar.addMenu("File")
         project_menu = menu_bar.addMenu("Project")
         settings_menu = menu_bar.addMenu("Settings")
+        help_menu = menu_bar.addMenu("Help")
 
         open_folder_action = QAction("Open Folder...", self)
         open_folder_action.setShortcut(QKeySequence("Ctrl+O"))
@@ -193,6 +195,26 @@ class MainWindow(QMainWindow):
         edit_archive_settings_action.triggered.connect(self.open_archive_settings_dialog)
         self.addAction(edit_archive_settings_action)
         settings_menu.addAction(edit_archive_settings_action)
+
+        about_action = QAction("About Archive Goblin", self)
+        about_action.triggered.connect(self.show_about_dialog)
+        help_menu.addAction(about_action)
+
+    def show_about_dialog(self) -> None:
+        QMessageBox.about(
+            self,
+            "About Archive Goblin",
+            (
+                f"<h2>Archive Goblin {__version__}</h2>"
+                "<p>Local desktop workstation for preparing Archive.org uploads.</p>"
+                "<p>Review files, apply safe renames, prepare metadata, preview uploads, "
+                "and send finished projects to Archive.org.</p>"
+                "<p><b>Settings:</b> stored locally under your user configuration folder.<br>"
+                "<b>Project metadata:</b> saved in the selected folder as "
+                ".archive-goblin-project.json.</p>"
+                "<p>License: MIT</p>"
+            ),
+        )
 
     def open_rules_dialog(self) -> None:
         self.settings_dialog.set_settings(
@@ -593,6 +615,7 @@ class MainWindow(QMainWindow):
         self._upload_thread.started.connect(self._upload_worker.run)
         self._upload_worker.started.connect(self.upload_progress_dialog.start)
         self._upload_worker.file_started.connect(self.upload_progress_dialog.mark_file_started)
+        self._upload_worker.file_progress.connect(self.upload_progress_dialog.mark_file_progress)
         self._upload_worker.file_finished.connect(self.upload_progress_dialog.mark_file_finished)
         self._upload_worker.finished.connect(self._on_upload_finished)
         self._upload_worker.finished.connect(self._upload_thread.quit)
