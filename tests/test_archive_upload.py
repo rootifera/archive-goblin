@@ -9,7 +9,7 @@ from unittest.mock import patch
 from archive_goblin.models.file_item import FileItem
 from archive_goblin.models.project_metadata import ProjectMetadata
 from archive_goblin.models.rule import FileType
-from archive_goblin.services.archive_upload import ArchiveRecoveryDetails, ArchiveUploadService
+from archive_goblin.services.archive_upload import ArchiveRecoveryDetails, ArchiveUploadPlan, ArchiveUploadService
 
 
 class _FakeResponse:
@@ -227,6 +227,46 @@ class ArchiveUploadServiceTests(unittest.TestCase):
                 result = self.service.upload_plan(plan)
 
                 self.assertTrue(result.success)
+
+    def test_upload_plan_reports_byte_progress(self) -> None:
+        events: list[tuple[int, str, int, int, float]] = []
+
+        def fake_upload(_identifier, files, **_kwargs):
+            upload_file = files[0]
+            self.assertEqual(upload_file.name, "100-front-01.jpg")
+            while upload_file.read(2):
+                pass
+            return [_FakeResponse()]
+
+        fake_module = ModuleType("internetarchive")
+        fake_module.upload = fake_upload
+
+        with patch.dict("sys.modules", {"internetarchive": fake_module}):
+            with TemporaryDirectory() as tmp:
+                folder = Path(tmp)
+                path = folder / "100-front-01.jpg"
+                path.write_bytes(b"abcdef")
+                plan = ArchiveUploadPlan(
+                    identifier="blade-runner",
+                    page_url="https://archive.org/details/blade-runner",
+                    file_paths=[path],
+                    metadata_payload={"title": "Blade Runner"},
+                    access_key="access",
+                    secret_key="secret",
+                )
+
+                result = self.service.upload_plan(
+                    plan,
+                    progress_callback=lambda *event: events.append(event),
+                )
+
+                self.assertTrue(result.success)
+                self.assertTrue(events)
+                self.assertEqual(events[-1][0], 0)
+                self.assertEqual(events[-1][1], "100-front-01.jpg")
+                self.assertEqual(events[-1][2], 6)
+                self.assertEqual(events[-1][3], 6)
+                self.assertGreater(events[-1][4], 0)
 
 
 if __name__ == "__main__":

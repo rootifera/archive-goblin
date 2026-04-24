@@ -50,6 +50,7 @@ class UploadPreviewServiceTests(unittest.TestCase):
                 folder,
                 files,
                 metadata,
+                "{title} ({release_year}) ({platform})",
                 "{title}-{release_year}",
                 ["retro"],
                 "",

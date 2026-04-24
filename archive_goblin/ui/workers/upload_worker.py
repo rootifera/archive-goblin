@@ -8,6 +8,7 @@ from archive_goblin.services.archive_upload import ArchiveUploadPlan, ArchiveUpl
 class UploadWorker(QObject):
     started = Signal(list)
     file_started = Signal(int, str)
+    file_progress = Signal(int, str, object, object, float)
     file_finished = Signal(int, str, int)
     finished = Signal(object, str)
 
@@ -26,5 +27,14 @@ class UploadWorker(QObject):
         def on_finished(index: int, file_name: str, completed: int) -> None:
             self.file_finished.emit(index, file_name, completed)
 
-        result = self.service.upload_plan(self.plan, on_started, on_finished)
+        def on_progress(
+            index: int,
+            file_name: str,
+            bytes_sent: int,
+            total_bytes: int,
+            bytes_per_second: float,
+        ) -> None:
+            self.file_progress.emit(index, file_name, bytes_sent, total_bytes, bytes_per_second)
+
+        result = self.service.upload_plan(self.plan, on_started, on_finished, on_progress)
         self.finished.emit(result, self.plan.page_url)
