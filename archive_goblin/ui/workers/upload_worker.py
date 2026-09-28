@@ -21,20 +21,10 @@ class UploadWorker(QObject):
         file_names = [path.name for path in self.plan.file_paths]
         self.started.emit(file_names)
 
-        def on_started(index: int, file_name: str) -> None:
-            self.file_started.emit(index, file_name)
-
-        def on_finished(index: int, file_name: str, completed: int) -> None:
-            self.file_finished.emit(index, file_name, completed)
-
-        def on_progress(
-            index: int,
-            file_name: str,
-            bytes_sent: int,
-            total_bytes: int,
-            bytes_per_second: float,
-        ) -> None:
-            self.file_progress.emit(index, file_name, bytes_sent, total_bytes, bytes_per_second)
-
-        result = self.service.upload_plan(self.plan, on_started, on_finished, on_progress)
+        result = self.service.upload_plan(
+            self.plan,
+            self.file_started.emit,
+            self.file_finished.emit,
+            self.file_progress.emit,
+        )
         self.finished.emit(result, self.plan.page_url)

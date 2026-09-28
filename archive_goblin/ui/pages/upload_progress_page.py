@@ -51,6 +51,10 @@ class UploadProgressDialog(QDialog):
         self.buttons.button(QDialogButtonBox.Close).clicked.connect(self.accept)
         layout.addWidget(self.buttons)
 
+        self._bar_indeterminate = False
+        self._cached_total: int = -1
+        self._cached_total_str: str = ""
+
     def _set_item_state(self, item: QListWidgetItem, prefix: str, file_name: str, color: str) -> None:
         item.setText(f"[{prefix}] {file_name}")
         item.setForeground(QBrush(QColor(color)))
@@ -74,6 +78,9 @@ class UploadProgressDialog(QDialog):
         self.current_file_label.setText(f"Current file: {file_name}")
         self.current_item_progress_bar.setRange(0, 0)
         self.current_speed_label.setText("Speed: calculating...")
+        self._bar_indeterminate = True
+        self._cached_total = -1
+        self._cached_total_str = ""
         item = self.progress_list.item(index)
         if item is not None:
             self._set_item_state(item, "Uploading", file_name, "#d9b46b")
@@ -86,11 +93,16 @@ class UploadProgressDialog(QDialog):
         total_bytes: int,
         bytes_per_second: float,
     ) -> None:
+        if self._bar_indeterminate:
+            self.current_item_progress_bar.setRange(0, 1000)
+            self._bar_indeterminate = False
+        if total_bytes != self._cached_total:
+            self._cached_total = total_bytes
+            self._cached_total_str = self._format_bytes(total_bytes)
         self.current_file_label.setText(
-            f"Current file: {file_name} ({self._format_bytes(bytes_sent)} / {self._format_bytes(total_bytes)})"
+            f"Current file: {file_name} ({self._format_bytes(bytes_sent)} / {self._cached_total_str})"
         )
         self.current_speed_label.setText(f"Speed: {self._format_speed(bytes_per_second)}")
-        self.current_item_progress_bar.setRange(0, 1000)
         progress_value = int((min(bytes_sent, total_bytes) / max(1, total_bytes)) * 1000)
         self.current_item_progress_bar.setValue(progress_value)
 
@@ -120,10 +132,10 @@ class UploadProgressDialog(QDialog):
         self.buttons.button(QDialogButtonBox.Close).setEnabled(True)
 
     def _format_speed(self, bytes_per_second: float) -> str:
-        return f"{self._format_bytes(int(bytes_per_second))}/s"
+        return f"{self._format_bytes(bytes_per_second)}/s"
 
-    def _format_bytes(self, size: int) -> str:
-        value = float(size)
+    def _format_bytes(self, size: float) -> str:
+        value = size
         units = ["B", "KB", "MB", "GB", "TB"]
         for unit in units:
             if value < 1024 or unit == units[-1]:
@@ -131,4 +143,3 @@ class UploadProgressDialog(QDialog):
                     return f"{int(value)} {unit}"
                 return f"{value:.1f} {unit}"
             value /= 1024
-        return f"{int(size)} B"

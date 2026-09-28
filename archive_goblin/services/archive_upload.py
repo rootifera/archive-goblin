@@ -40,6 +40,9 @@ class ArchiveRecoveryDetails:
 UploadProgressCallback = Callable[[int, str, int, int, float], None]
 
 
+_PROGRESS_EMIT_INTERVAL = 0.1  # seconds between UI updates
+
+
 class UploadProgressFile:
     def __init__(
         self,
@@ -54,6 +57,7 @@ class UploadProgressFile:
         self.total_bytes = path.stat().st_size
         self.bytes_sent = 0
         self._started_at = perf_counter()
+        self._last_emit: float = 0.0
         self._handle: BinaryIO = path.open("rb")
 
     def read(self, size: int = -1) -> bytes:
@@ -65,8 +69,8 @@ class UploadProgressFile:
 
     def seek(self, offset: int, whence: int = 0) -> int:
         position = self._handle.seek(offset, whence)
+        self.bytes_sent = position
         if whence == 0 and offset == 0:
-            self.bytes_sent = 0
             self._started_at = perf_counter()
         return position
 
@@ -79,7 +83,11 @@ class UploadProgressFile:
     def _emit_progress(self) -> None:
         if self.progress_callback is None:
             return
-        elapsed_seconds = max(0.001, perf_counter() - self._started_at)
+        now = perf_counter()
+        if self.bytes_sent < self.total_bytes and now - self._last_emit < _PROGRESS_EMIT_INTERVAL:
+            return
+        self._last_emit = now
+        elapsed_seconds = max(0.001, now - self._started_at)
         bytes_per_second = self.bytes_sent / elapsed_seconds
         self.progress_callback(
             self.file_index,
