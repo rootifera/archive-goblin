@@ -15,7 +15,9 @@ It starts with file review and renaming, then carries that work forward into pro
 - Archive.org page URL generation and availability check
 - Archive.org credential storage and connection test
 - Upload preview with identifier, tags, description, size, warnings, and blockers
-- Real Archive.org upload flow with progress dialog
+- Real Archive.org upload flow with progress dialog, real-time speed, and per-file byte counter
+- Interrupted uploads can be resumed by comparing local files against the existing remote item
+- About dialog with version info (`Help → About`)
 
 ## Project Structure
 
@@ -117,5 +119,4 @@ Files page:
 
 - Archive Goblin ignores `.archive-goblin-project.json` during rename review and upload.
 - SMB / CIFS shares can behave unpredictably for rename visibility on Linux. Local folders are more reliable.
-- Partial Archive.org uploads can now be resumed by comparing local files with the existing remote item.
 - The current application icon was picked randomly from `icon-icons.com`.
